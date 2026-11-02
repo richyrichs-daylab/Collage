@@ -3,38 +3,42 @@ package de.bildgestalter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.BorderStroke
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
-enum class Screen { HOME, FREISTIL, COLLAGE, REIHE }
+import kotlinx.coroutines.launch
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
 
 private val Cyan = Color(0xFFB5ECF2)
 private val Blau = Color(0xFFC2D4FF)
@@ -49,35 +53,79 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun App() {
-    var screen by remember { mutableStateOf(Screen.HOME) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var editor by remember { mutableStateOf<EditorState?>(null) }
+    var confirmBack by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
+    val rowPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            scope.launch {
+                val bmps = loadBitmaps(context, uris)
+                if (bmps.isNotEmpty()) {
+                    val s = EditorState(Mode.REIHE)
+                    s.addImages(bmps)
+                    editor = s
+                }
+            }
+        }
+    }
 
-    when (screen) {
-        Screen.HOME -> HomeScreen(onOpen = { screen = it })
-        else -> EditorScreen(
-            title = when (screen) {
-                Screen.FREISTIL -> "Freistil"
-                Screen.COLLAGE -> "Collage"
-                else -> "Reihe"
+    val current = editor
+    val goBack: () -> Unit = {
+        val c = editor
+        if (c != null) {
+            if (c.images.isEmpty() && c.texts.isEmpty()) editor = null else confirmBack = true
+        }
+    }
+
+    BackHandler(enabled = current != null) { goBack() }
+
+    if (current == null) {
+        HomeScreen(
+            onFreistil = { editor = EditorState(Mode.FREISTIL) },
+            onCollage = { editor = EditorState(Mode.COLLAGE) },
+            onReihe = {
+                rowPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }
+        )
+    } else {
+        EditorScreen(current, goBack)
+    }
+
+    if (confirmBack) {
+        AlertDialog(
+            onDismissRequest = { confirmBack = false },
+            title = { Text("Zur Startseite?") },
+            text = { Text("Nicht exportierte Änderungen gehen verloren.") },
+            confirmButton = {
+                TextButton(onClick = { confirmBack = false; editor = null }) { Text("Ja") }
             },
-            onBack = { screen = Screen.HOME }
+            dismissButton = {
+                TextButton(onClick = { confirmBack = false }) { Text("Abbrechen") }
+            }
         )
     }
 }
 
 @Composable
 fun OutlinedLabel(text: String, size: Int) {
+    val r = max(1.5f, size * 0.09f)
     Box {
-        Text(
-            text = text,
-            style = TextStyle(
+        for (i in 0 until 8) {
+            val a = (i * Math.PI / 4).toFloat()
+            Text(
+                text = text,
                 fontSize = size.sp,
                 color = Color.White,
-                drawStyle = Stroke(width = 14f, join = StrokeJoin.Round)
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.offset((cos(a) * r).dp, (sin(a) * r).dp)
             )
-        )
-        Text(text = text, style = TextStyle(fontSize = size.sp, color = Cyan))
+        }
+        Text(text = text, fontSize = size.sp, color = Cyan, maxLines = 1, softWrap = false)
     }
 }
 
@@ -89,23 +137,16 @@ fun BigButton(text: String, onClick: () -> Unit) {
             .height(110.dp)
             .clip(RoundedCornerShape(34.dp))
             .background(Color.White.copy(alpha = 0.45f))
+            .border(6.dp, Color.White, RoundedCornerShape(34.dp))
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(RoundedCornerShape(34.dp))
-                .then(
-                    Modifier.background(Color.Transparent, RoundedCornerShape(34.dp))
-                )
-        )
         OutlinedLabel(text, 38)
     }
 }
 
 @Composable
-fun HomeScreen(onOpen: (Screen) -> Unit) {
+fun HomeScreen(onFreistil: () -> Unit, onCollage: () -> Unit, onReihe: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -113,35 +154,8 @@ fun HomeScreen(onOpen: (Screen) -> Unit) {
         verticalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        BigButton("Freistil") { onOpen(Screen.FREISTIL) }
-        BigButton("Collage") { onOpen(Screen.COLLAGE) }
-        BigButton("Reihe") { onOpen(Screen.REIHE) }
-    }
-}
-
-@Composable
-fun EditorScreen(title: String, onBack: () -> Unit) {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFE6E6E6))) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color.White)
-                .statusBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("←", fontSize = 30.sp, color = Color(0xFF2A9DB0),
-                modifier = Modifier.clickable { onBack() })
-            Text("Exportieren", fontSize = 17.sp, color = Color(0xFF2A9DB0),
-                modifier = Modifier.clickable { /* kommt in Etappe 2 */ })
-        }
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            Text("$title-Seite (kommt in der nächsten Etappe)", fontSize = 18.sp)
-        }
+        BigButton("Freistil", onFreistil)
+        BigButton("Collage", onCollage)
+        BigButton("Reihe", onReihe)
     }
 }
