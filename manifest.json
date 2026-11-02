@@ -1,0 +1,8 @@
+{
+  "name": "Bildgestalter",
+  "short_name": "Bildgestalter",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#c2d4ff",
+  "theme_color": "#c2d4ff"
+}
