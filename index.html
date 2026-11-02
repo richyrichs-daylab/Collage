@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#c2d4ff">
+<link rel="manifest" href="manifest.json">
+<title>Bildgestalter</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;font-family:"Century Gothic",Avenir,"Trebuchet MS",sans-serif;touch-action:manipulation}
+.page{position:fixed;inset:0;display:none;flex-direction:column}
+.page.on{display:flex}
+.big,.tb{font:inherit;color:#b5ecf2;paint-order:stroke fill;-webkit-text-stroke:8px #fff;border:7px solid #fff;background:rgba(255,255,255,.45)}
+#home{background:linear-gradient(#c2d4ff,#e3f7be);justify-content:center;align-items:center;gap:28px}
+.big{width:72%;max-width:340px;padding:24px 0;border-radius:34px;font-size:40px}
+#ed{background:#e6e6e6}
+.top{height:56px;display:flex;justify-content:space-between;align-items:center;padding:0 14px;background:#fff}
+.top button{border:0;background:none;font:inherit;font-size:28px;color:#2a9db0}
+#exp{font-size:17px;font-weight:bold}
+#area{flex:1;overflow:auto;background:#c8c8c8}
+#stage{position:relative;background:#fff;margin:12px auto}
+.it{position:absolute;touch-action:none}
+.it img{width:100%;height:100%;object-fit:cover;display:block;pointer-events:none}
+.tx{line-height:1.2;white-space:pre-wrap;word-break:break-word}
+.x,.rs{display:none;position:absolute;width:30px;height:30px;border-radius:50%;align-items:center;justify-content:center;z-index:5}
+.x{left:-15px;top:-15px;background:#e53935;color:#fff;font-size:22px;font-weight:bold}
+.rs{right:-15px;bottom:-15px;background:#fff;border:1px solid #888}
+.sel{outline:2px solid #3aa8c1}.sel .x,.sel .rs{display:flex}
+.fixed .rs{display:none!important}
+#panel{display:none;background:#f4f4f4;padding:8px;gap:6px;flex-direction:column;border-top:1px solid #bbb}
+#panel.on{display:flex}
+#panel textarea{width:100%;font:inherit;font-size:16px;padding:6px;border:1px solid #aaa;border-radius:8px}
+.row{display:flex;gap:6px;align-items:center;font-size:13px}
+.row select,.row button{font:inherit;font-size:13px;padding:6px;border:1px solid #aaa;border-radius:8px;background:#fff}
+.row input[type=color]{width:38px;height:32px;padding:0;border:1px solid #aaa}
+#bar{display:flex;gap:10px;padding:10px 10px calc(10px + env(safe-area-inset-bottom));background:#e6e6e6}
+.tb{flex:1;height:64px;border-radius:22px;font-size:22px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px}
+.fr{display:block;background:#bbb;border:3px solid #fff;border-radius:3px}
+.fr.v{width:18px;height:26px}.fr.h{width:26px;height:18px}
+.dots{display:flex;gap:5px}.dots i{width:7px;height:7px;border-radius:50%;background:#ddd}.dots i.a{background:#3aa8c1}
+#sheet{display:none;gap:10px;overflow-x:auto;padding:10px;background:#fff;border-top:1px solid #bbb}
+#sheet.on{display:flex}
+.th{position:relative;flex:0 0 70px;height:70px;background:#ccc;border-radius:6px}
+.th div{position:absolute;background:#7cc6d4}
+</style>
+</head>
+<body>
+<div id="home" class="page on">
+  <button class="big" onclick="go('free')">Freistil</button>
+  <button class="big" onclick="go('col')">Collage</button>
+  <button class="big" onclick="go('row')">Reihe</button>
+</div>
+
+<div id="ed" class="page">
+  <div class="top"><button onclick="home()">←</button><button id="exp" onclick="exportPng()">Exportieren</button></div>
+  <div id="area"><div id="stage"></div></div>
+  <div id="panel">
+    <textarea id="ta" rows="2"></textarea>
+    <div class="row">
+      <select id="fo"></select>
+      Schrift<input type="color" id="co" value="#000000">
+      Feld<input type="color" id="bg" value="#ffffff">
+      <label><input type="checkbox" id="bgon">an</label>
+    </div>
+    <div class="row">
+      <button data-al="left">Linksbündig</button><button data-al="center">Mittig</button><button data-al="right">Rechtsbündig</button>
+    </div>
+  </div>
+  <div id="sheet"></div>
+  <div id="bar"></div>
+</div>
+<input type="file" id="fi" accept="image/*" multiple hidden>
+
+<script>
+const $=q=>document.querySelector(q);
+let items=[],mode='free',fmt='v',cl=0,sel=null,s=1,L={W:1080,H:1350};
+const FONTS=[['Standard','sans-serif'],['Serif','Georgia,serif'],['Schreibmaschine','"Courier New",monospace'],['Handschrift','"Comic Sans MS",cursive'],['Fett','Impact,fantasy']];
+const ARROW='<svg viewBox="0 0 24 24" width="18" height="18"><path d="M5 19L19 5M19 5h-6M19 5v6M5 19h6M5 19v-6" stroke="#000" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>';
+$('#fo').innerHTML=FONTS.map((f,i)=>`<option value="${i}">${f[0]}</option>`).join('');
+
+function go(m){mode=m;items=[];fmt='v';cl=0;sel=null;$('#home').classList.remove('on');$('#ed').classList.add('on');render();if(m!=='free')$('#fi').click()}
+function home(){if(items.length&&!confirm('Zurück zur Startseite? Nicht exportierte Änderungen gehen verloren.'))return;$('#ed').classList.remove('on');$('#home').classList.add('on')}
+
+/* Bilder */
+$('#fi').onchange=e=>{add(e.target.files);e.target.value=''};
+async function add(files){
+  const arr=await Promise.all([...files].map(f=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.onerror=()=>r(null);i.src=URL.createObjectURL(f)})));
+  arr.filter(Boolean).forEach(im=>{const w=540;items.push({t:'img',im,x:60+items.length*30,y:60+items.length*30,w,h:w*im.naturalHeight/im.naturalWidth})});
+  render();
+}
+/* Text */
+function addText(){
+  const a=$('#area');
+  const w=Math.min(L.W*.6,a.clientWidth*.6/s);
+  const it={t:'txt',txt:'Text',x:Math.min((a.scrollLeft+a.clientWidth*.15)/s,L.W*.3),y:Math.min((a.scrollTop+a.clientHeight*.3)/s,L.H-100),w,fs:Math.round(w/8),font:FONTS[0][1],col:'#000000',bg:'',al:'center'};
+  items.push(it);sel=it;render();select(it);$('#ta').focus();
+}
+
+/* Layout */
+function comp(n,m){if(!n)return[[]];if(!m)return[];let r=[];for(let p=1;p<=Math.min(4,n);p++)comp(n-p,m-1).forEach(x=>r.push([p,...x]));return r}
+function opts(n){
+  if(n<1)return[];
+  let r=[];comp(n,4).forEach(c=>{r.push({c,t:0});if(new Set(c).size>1)r.push({c,t:1})});
+  r.sort((a,b)=>(Math.max(...a.c)-Math.min(...a.c))-(Math.max(...b.c)-Math.min(...b.c)));r=r.slice(0,10);
+  if(!r.length){const k=Math.ceil(Math.sqrt(n)),c=[];let l=n;while(l>0){c.push(Math.min(k,l));l-=k}r=[{c,t:0}]}
+  return r;
+}
+function cells(o,S,g){
+  const rows=o.c.length,rh=(S-(rows-1)*g)/rows,out=[];
+  o.c.forEach((k,i)=>{const cw=(S-(k-1)*g)/k;for(let j=0;j<k;j++){let r={x:j*(cw+g),y:i*(rh+g),w:cw,h:rh};if(o.t)r={x:r.y,y:r.x,w:r.h,h:r.w};out.push(r)}});
+  return out;
+}
+function layout(){
+  const im=items.filter(i=>i.t==='img');
+  if(mode==='free')return{W:1080,H:1350};
+  if(mode==='col'){const os=opts(im.length);const o=os[Math.min(cl,os.length-1)];const c=o?cells(o,1080,8):[];im.forEach((i,k)=>{if(c[k])Object.assign(i,c[k])});return{W:1080,H:1080}}
+  let p=0;
+  if(fmt==='v'){im.forEach(i=>{i.x=0;i.y=p;i.w=1080;i.h=1080*i.im.naturalHeight/i.im.naturalWidth;p+=i.h});return{W:1080,H:Math.max(p,1080)}}
+  im.forEach(i=>{i.y=0;i.x=p;i.h=1080;i.w=1080*i.im.naturalWidth/i.im.naturalHeight;p+=i.w});
+  return{W:Math.max(p,1080),H:1080};
+}
+
+/* Anzeige */
+function render(){
+  const st=$('#stage');st.innerHTML='';
+  items.forEach(it=>{
+    const e=document.createElement('div');e.className='it';it.el=e;
+    if(it.t==='img'){const i=document.createElement('img');i.src=it.im.src;e.append(i)}
+    else{const d=document.createElement('div');d.className='tx';d.textContent=it.txt;e.append(d);it.tx=d;e.style.zIndex=2}
+    e.insertAdjacentHTML('beforeend','<b class="x">×</b><b class="rs">'+ARROW+'</b>');
+    e.onpointerdown=ev=>down(ev,it);
+    e.querySelector('.x').onpointerdown=ev=>{ev.stopPropagation();items=items.filter(o=>o!==it);if(sel===it)sel=null;render()};
+    e.querySelector('.rs').onpointerdown=ev=>resize(ev,it);
+    st.append(e);
+  });
+  bar();fit();
+}
+function fit(){
+  $('#panel').classList.toggle('on',!!sel&&sel.t==='txt');
+  L=layout();
+  const a=$('#area'),aw=a.clientWidth-24,ah=a.clientHeight-24;
+  s=mode==='row'?(fmt==='v'?aw/L.W:ah/L.H):Math.min(aw/L.W,ah/L.H);
+  const st=$('#stage');st.style.width=L.W*s+'px';st.style.height=L.H*s+'px';
+  items.forEach(it=>{place(it);it.el.classList.toggle('sel',it===sel);it.el.classList.toggle('fixed',mode!=='free'&&it.t==='img')});
+}
+function place(it){
+  const e=it.el;e.style.left=it.x*s+'px';e.style.top=it.y*s+'px';e.style.width=it.w*s+'px';
+  if(it.t==='img')e.style.height=it.h*s+'px';
+  else{const t=it.tx.style;t.fontSize=it.fs*s+'px';t.fontFamily=it.font;t.color=it.col;t.background=it.bg||'transparent';t.textAlign=it.al;t.padding=it.fs*.25*s+'px'}
+}
+onresize=fit;
+$('#area').onpointerdown=e=>{if(e.target.id==='area'||e.target.id==='stage')select(null)};
+
+/* Auswahl, Ziehen, Größe ändern */
+function select(it){
+  sel=it;$('#sheet').classList.remove('on');
+  if(it&&it.t==='txt'){
+    $('#ta').value=it.txt;$('#fo').value=Math.max(0,FONTS.findIndex(f=>f[1]===it.font));
+    $('#co').value=it.col;$('#bgon').checked=!!it.bg;if(it.bg)$('#bg').value=it.bg;
+  }
+  fit();
+}
+function down(ev,it){
+  ev.stopPropagation();select(it);
+  if(it.t==='img'&&mode!=='free')return;
+  const e=it.el,sx=ev.clientX,sy=ev.clientY,ox=it.x,oy=it.y;
+  e.setPointerCapture(ev.pointerId);
+  e.onpointermove=m=>{it.x=ox+(m.clientX-sx)/s;it.y=oy+(m.clientY-sy)/s;place(it)};
+  e.onpointerup=e.onpointercancel=()=>{e.onpointermove=null};
+}
+function resize(ev,it){
+  ev.stopPropagation();select(it);
+  const h=ev.currentTarget,sx=ev.clientX,sy=ev.clientY,w0=it.w,h0=it.h,f0=it.fs;
+  h.setPointerCapture(ev.pointerId);
+  h.onpointermove=m=>{const d=((m.clientX-sx)+(m.clientY-sy))/2/s;const k=Math.max(.1,(w0+d)/w0);it.w=w0*k;if(it.t==='img')it.h=h0*k;else it.fs=f0*k;place(it)};
+  h.onpointerup=h.onpointercancel=()=>{h.onpointermove=null};
+}
+
+/* Textfeld-Einstellungen */
+$('#ta').oninput=e=>{if(sel){sel.txt=e.target.value;sel.tx.textContent=sel.txt}};
+$('#fo').onchange=e=>{if(sel){sel.font=FONTS[e.target.value][1];place(sel)}};
+$('#co').oninput=e=>{if(sel){sel.col=e.target.value;place(sel)}};
+const setbg=()=>{if(sel){sel.bg=$('#bgon').checked?$('#bg').value:'';place(sel)}};
+$('#bg').oninput=()=>{$('#bgon').checked=true;setbg()};$('#bgon').onchange=setbg;
+document.querySelectorAll('[data-al]').forEach(b=>b.onclick=()=>{if(sel){sel.al=b.dataset.al;place(sel)}});
+
+/* Untere Leiste */
+function bar(){
+  const B=$('#bar');
+  const fm=`<button class="tb" data-a="fmt"><span class="fr ${fmt}"></span><span class="dots"><i class="${fmt==='v'?'a':''}"></i><i class="${fmt==='h'?'a':''}"></i></span></button>`;
+  const txt='<button class="tb" data-a="txt">Text</button>';
+  if(mode==='free')B.innerHTML='<button class="tb" data-a="add" style="font-size:18px">Weitere Bilder</button>'+txt;
+  if(mode==='row')B.innerHTML=fm+'<button class="tb" data-a="add" style="font-size:18px">Bilder hinzufügen</button>'+txt;
+  if(mode==='col')B.innerHTML='<button class="tb" data-a="add" style="font-size:18px">Hinzufügen</button><button class="tb" data-a="grid" style="font-size:18px">Raster</button>'+txt;
+}
+$('#bar').onclick=e=>{
+  const b=e.target.closest('[data-a]');if(!b)return;const a=b.dataset.a;
+  if(a==='fmt'){fmt=fmt==='v'?'h':'v';render()}
+  if(a==='add')$('#fi').click();
+  if(a==='txt')addText();
+  if(a==='grid')sheet();
+};
+function sheet(){
+  const sh=$('#sheet');
+  if(sh.classList.contains('on')){sh.classList.remove('on');return}
+  const n=items.filter(i=>i.t==='img').length;
+  sh.innerHTML='';
+  opts(n).forEach((o,i)=>{
+    const t=document.createElement('div');t.className='th';
+    cells(o,100,3).forEach(c=>{t.insertAdjacentHTML('beforeend',`<div style="left:${c.x}%;top:${c.y}%;width:${c.w}%;height:${c.h}%"></div>`)});
+    t.onclick=()=>{cl=i;sh.classList.remove('on');fit()};
+    sh.append(t);
+  });
+  sh.classList.add('on');
+}
+
+/* Export */
+function wrap(x,t,mw){const out=[];t.split('\n').forEach(p=>{let l='';p.split(' ').forEach(w=>{const tr=l?l+' '+w:w;if(x.measureText(tr).width<=mw||!l)l=tr;else{out.push(l);l=w}});out.push(l)});return out}
+function save(b,ext){const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='bild-'+Date.now()+'.'+ext;a.click()}
+function exportPng(){
+  if(!items.length){alert('Bitte zuerst Bilder oder Text hinzufügen.');return}
+  const l=layout();let k=1;const m=Math.max(l.W,l.H);if(m>16000)k=16000/m;
+  const c=document.createElement('canvas');c.width=Math.round(l.W*k);c.height=Math.round(l.H*k);
+  const x=c.getContext('2d');x.scale(k,k);x.fillStyle='#fff';x.fillRect(0,0,l.W,l.H);
+  items.filter(i=>i.t==='img').forEach(i=>{
+    const nw=i.im.naturalWidth,nh=i.im.naturalHeight,r=Math.max(i.w/nw,i.h/nh),sw=i.w/r,sh=i.h/r;
+    x.drawImage(i.im,(nw-sw)/2,(nh-sh)/2,sw,sh,i.x,i.y,i.w,i.h);
+  });
+  items.filter(i=>i.t==='txt').forEach(it=>{
+    const p=it.fs*.25;x.font=it.fs+'px '+it.font;
+    const ls=wrap(x,it.txt,it.w-2*p),lh=it.fs*1.2,h=ls.length*lh+2*p;
+    if(it.bg){x.fillStyle=it.bg;x.fillRect(it.x,it.y,it.w,h)}
+    x.fillStyle=it.col;x.textBaseline='middle';x.textAlign=it.al;
+    const tx=it.al==='left'?it.x+p:it.al==='right'?it.x+it.w-p:it.x+it.w/2;
+    ls.forEach((t,i)=>x.fillText(t,tx,it.y+p+i*lh+lh/2));
+  });
+  c.toBlob(b=>b?save(b,'png'):c.toBlob(j=>save(j,'jpg'),'image/jpeg',.92),'image/png');
+}
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
