@@ -19,6 +19,12 @@ jobs:
         with:
           gradle-version: 8.7
 
+      - name: Schriftart Russo One laden
+        run: |
+          mkdir -p app/src/main/res/font
+          curl -fL --retry 3 -o app/src/main/res/font/russo_one.ttf https://raw.githubusercontent.com/google/fonts/main/ofl/russoone/RussoOne-Regular.ttf
+          test -s app/src/main/res/font/russo_one.ttf
+
       - name: Schlüssel bereitstellen
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
