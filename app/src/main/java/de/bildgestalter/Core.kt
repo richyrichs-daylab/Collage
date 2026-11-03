@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
@@ -273,12 +274,17 @@ fun renderBitmap(s: EditorState): Bitmap {
             val dst = RectF(r.x, r.y, r.x + r.w, r.y + r.h)
             val rad = s.rundung / 100f * min(r.w, r.h) / 2f
             if (rad > 0.5f) {
+                // Bild in eigener Ebene zeichnen, dann alles AUSSERHALB der
+                // Rundform wegradieren (Gegenteil der Rundform mit DST_OUT)
                 val layer = c.saveLayer(dst, null)
                 c.drawBitmap(img.bmp, src, dst, paint)
+                val outside = Path()
+                outside.addRoundRect(dst, rad, rad, Path.Direction.CW)
+                outside.fillType = Path.FillType.INVERSE_WINDING
                 val mp = Paint(Paint.ANTI_ALIAS_FLAG)
-                mp.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                mp.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
                 mp.color = android.graphics.Color.BLACK
-                c.drawRoundRect(dst, rad, rad, mp)
+                c.drawPath(outside, mp)
                 c.restoreToCount(layer)
             } else {
                 c.drawBitmap(img.bmp, src, dst, paint)
