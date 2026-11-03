@@ -55,12 +55,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -70,6 +72,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val Teal = Color(0xFF3AA8C1)
+
+// Zusätzlicher Rand um jedes Element für die Eckkreise (x und Pfeil)
+private val ITEM_PAD = 22.dp
 
 private val PALETTE = listOf(
     Color.Black, Color.White, Color(0xFFE53935), Color(0xFFFB8C00),
@@ -95,6 +100,8 @@ private fun alignOf(i: Int) = when (i) {
 @Composable
 fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     val context = LocalContext.current
+    val density = LocalDensity.current
+    val padPx = with(density) { ITEM_PAD.roundToPx() }
     val scope = rememberCoroutineScope()
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
@@ -181,10 +188,11 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
             val aw = constraints.maxWidth.toFloat()
             val ah = constraints.maxHeight.toFloat()
             val (cw, ch) = canvasSize(state)
+            val p2 = 2f * padPx + 4f
             val scale = when {
-                state.mode != Mode.REIHE -> min(aw * 0.94f / cw, ah * 0.94f / ch)
-                state.vertical -> aw * 0.84f / cw
-                else -> ah * 0.84f / ch
+                state.mode != Mode.REIHE -> min((aw - p2) / cw, (ah - p2) / ch)
+                state.vertical -> min(aw * 0.84f, aw - p2) / cw
+                else -> min(ah * 0.84f, ah - p2) / ch
             }
             scaleRef[0] = scale
 
@@ -234,26 +242,38 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
 @Composable
 fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
     val density = LocalDensity.current
+    val padPx = with(density) { ITEM_PAD.roundToPx() }
     val rects = rectsOf(state)
     val free = state.mode == Mode.FREISTIL
     val sw = (cw * scale).roundToInt()
     val sh = (ch * scale).roundToInt()
     val stageBg = if (free) Color.White else state.frameColor
+
+    // Behälter: etwas größer als die Fläche, damit die Eckkreise am Rand
+    // Platz haben und die Bilder nicht gestaucht werden.
     Box(
-        Modifier
-            .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
-            .background(stageBg)
+        Modifier.size(
+            with(density) { (sw + 2 * padPx).toDp() },
+            with(density) { (sh + 2 * padPx).toDp() }
+        )
     ) {
-        if (state.images.isEmpty() && state.texts.isEmpty()) {
-            Text(
-                when (state.mode) {
-                    Mode.FREISTIL -> "Füge Bilder oder Text hinzu"
-                    Mode.COLLAGE -> "Tippe auf „+“"
-                    Mode.REIHE -> "Füge Bilder hinzu"
-                },
-                color = Color(0xFF999999),
-                modifier = Modifier.align(Alignment.Center)
-            )
+        Box(
+            Modifier
+                .offset { IntOffset(padPx, padPx) }
+                .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
+                .background(stageBg),
+            contentAlignment = Alignment.Center
+        ) {
+            if (state.images.isEmpty() && state.texts.isEmpty()) {
+                Text(
+                    when (state.mode) {
+                        Mode.FREISTIL -> "Füge Bilder oder Text hinzu"
+                        Mode.COLLAGE -> "Tippe auf „+“"
+                        Mode.REIHE -> "Füge Bilder hinzu"
+                    },
+                    color = Color(0xFF999999)
+                )
+            }
         }
         state.images.forEachIndexed { i, img ->
             val r = rects.getOrNull(i)
@@ -342,6 +362,12 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
     }
 }
 
+/**
+ * x, y, w, h: Position und Größe des Inhalts in Pixeln, bezogen auf die Fläche.
+ * Der Behälter (Stage) beginnt ITEM_PAD links/oben vor der Fläche. Der Rahmen
+ * dieses Elements (Inhalt + ITEM_PAD ringsum) liegt deshalb bei (x, y).
+ * Die Größe wird fest vorgegeben und nie vom Elternteil gestaucht.
+ */
 @Composable
 fun ItemFrame(
     x: Float, y: Float, w: Float, h: Float?,
@@ -353,23 +379,30 @@ fun ItemFrame(
     content: @Composable () -> Unit
 ) {
     val density = LocalDensity.current
-    val padPx = with(density) { 22.dp.roundToPx() }
+    val padPx = with(density) { ITEM_PAD.roundToPx() }
     val padDp = with(density) { padPx.toDp() }
     val curSelect by rememberUpdatedState(onSelect)
     val curMove by rememberUpdatedState(onMove)
     val curResize by rememberUpdatedState(onResize)
     val curDelete by rememberUpdatedState(onDelete)
-    val totalW = with(density) { (w.roundToInt() + 2 * padPx).toDp() }
-    val sizeMod = if (h != null) {
-        Modifier.size(totalW, with(density) { (h.roundToInt() + 2 * padPx).toDp() })
-    } else {
-        Modifier.width(totalW)
-    }
+    val totalW = max(0, w.roundToInt()) + 2 * padPx
+    val totalH: Int? = h?.let { max(0, it.roundToInt()) + 2 * padPx }
 
     Box(
         Modifier
-            .offset { IntOffset(x.roundToInt() - padPx, y.roundToInt() - padPx) }
-            .then(sizeMod)
+            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .layout { measurable, _ ->
+                val c = if (totalH != null) {
+                    Constraints.fixed(totalW, totalH)
+                } else {
+                    Constraints(
+                        minWidth = totalW, maxWidth = totalW,
+                        minHeight = 0, maxHeight = Constraints.Infinity
+                    )
+                }
+                val p = measurable.measure(c)
+                layout(p.width, p.height) { p.place(0, 0) }
+            }
     ) {
         Box(
             Modifier
