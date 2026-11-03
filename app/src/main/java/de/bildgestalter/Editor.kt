@@ -83,6 +83,7 @@ private val PALETTE = listOf(
 )
 
 private fun familyOf(i: Int): FontFamily = when (i) {
+    0 -> RussoFamily
     1 -> FontFamily.Serif
     2 -> FontFamily.Monospace
     3 -> FontFamily.Cursive
@@ -170,11 +171,11 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
             Alignment.CenterVertically
         ) {
             Text(
-                "←", fontSize = 30.sp, color = Teal,
+                "←", fontSize = 30.sp, color = Color.Black,
                 modifier = Modifier.clickable { onBack() }.padding(horizontal = 12.dp, vertical = 4.dp)
             )
             Text(
-                "Exportieren", fontSize = 18.sp, color = Teal,
+                "Exportieren", fontSize = 18.sp, color = Color.Black,
                 modifier = Modifier.clickable { export() }.padding(horizontal = 12.dp, vertical = 8.dp)
             )
         }
@@ -257,24 +258,13 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
             with(density) { (sh + 2 * padPx).toDp() }
         )
     ) {
+        // Leere Fläche: bewusst ohne Hinweistext
         Box(
             Modifier
                 .offset { IntOffset(padPx, padPx) }
                 .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
-                .background(stageBg),
-            contentAlignment = Alignment.Center
-        ) {
-            if (state.images.isEmpty() && state.texts.isEmpty()) {
-                Text(
-                    when (state.mode) {
-                        Mode.FREISTIL -> "Füge Bilder oder Text hinzu"
-                        Mode.COLLAGE -> "Tippe auf „+“"
-                        Mode.REIHE -> "Füge Bilder hinzu"
-                    },
-                    color = Color(0xFF999999)
-                )
-            }
-        }
+                .background(stageBg)
+        )
         state.images.forEachIndexed { i, img ->
             val r = rects.getOrNull(i)
             if (r != null) {
@@ -517,15 +507,15 @@ fun TextPanel(t: TxtItem) {
             label = { Text("Text") },
             maxLines = 3
         )
-        Text("Schriftart", fontSize = 12.sp, color = Color.Gray)
+        Text("Schriftart", fontSize = 12.sp, color = Color.Black)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FONT_NAMES.forEachIndexed { i, n -> Chip(n, t.font == i) { t.font = i } }
         }
-        Text("Schriftfarbe", fontSize = 12.sp, color = Color.Gray)
+        Text("Schriftfarbe", fontSize = 12.sp, color = Color.Black)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             PALETTE.forEach { c -> ColorDot(c, t.color == c) { t.color = c } }
         }
-        Text("Textfeld-Hintergrund", fontSize = 12.sp, color = Color.Gray)
+        Text("Textfeld-Hintergrund", fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -534,7 +524,7 @@ fun TextPanel(t: TxtItem) {
             Chip("Kein", t.bg == null) { t.bg = null }
             PALETTE.forEach { c -> ColorDot(c, t.bg == c) { t.bg = c } }
         }
-        Text("Ausrichtung", fontSize = 12.sp, color = Color.Gray)
+        Text("Ausrichtung", fontSize = 12.sp, color = Color.Black)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Chip("Linksbündig", t.align == 0) { t.align = 0 }
             Chip("Mittig", t.align == 1) { t.align = 1 }
@@ -645,7 +635,7 @@ fun GridPicker(state: EditorState) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         if (opts.isEmpty()) {
-            Text("Füge zuerst Bilder hinzu.", color = Color.Gray)
+            Text("Füge zuerst Bilder hinzu.", color = Color.Black)
         }
         opts.forEachIndexed { i, o ->
             val isSel = i == state.collageIdx.coerceIn(0, opts.size - 1)
@@ -688,7 +678,14 @@ fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
-        OutlinedLabel(label, size)
+        Text(
+            text = label,
+            fontSize = size.sp,
+            color = Color.Black,
+            fontFamily = RussoFamily,
+            maxLines = 1,
+            softWrap = false
+        )
     }
 }
 
