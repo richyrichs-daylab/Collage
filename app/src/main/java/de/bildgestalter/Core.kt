@@ -6,6 +6,8 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.ImageDecoder
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -70,23 +72,42 @@ class EditorState(val mode: Mode) {
     var vertical by mutableStateOf(true)
     var collageIdx by mutableStateOf(0)
     var gridOpen by mutableStateOf(false)
+
+    // Rahmen
+    var frameOpen by mutableStateOf(false)
+    var gap by mutableStateOf(0)          // "Dicke" 0..100
+    var rundung by mutableStateOf(0)      // "Rundung" 0..100
+    var frameColor by mutableStateOf(Color.White)
+
+    // Freistil: Höhe der Fläche (passt sich dem ersten Bild an)
+    var freeH by mutableStateOf(1350f)
 }
 
 fun EditorState.addImages(bmps: List<Bitmap>) {
     for (b in bmps) {
         val item = ImgItem(b)
         if (mode == Mode.FREISTIL) {
-            var w = 540f
-            var h = w * b.height / b.width
-            if (h > 900f) {
-                w *= 900f / h
-                h = 900f
+            if (images.isEmpty()) {
+                // Erstes Bild füllt die ganze Fläche, keine Leerflächen
+                freeH = (BASE * b.height / b.width).coerceIn(540f, 2160f)
+                item.x = 0f
+                item.y = 0f
+                item.w = BASE
+                item.h = freeH
+            } else {
+                var w = 540f
+                var h = w * b.height / b.width
+                val maxH = freeH * 0.7f
+                if (h > maxH) {
+                    w *= maxH / h
+                    h = maxH
+                }
+                val off = (images.size % 6) * 40f
+                item.w = w
+                item.h = h
+                item.x = min(100f + off, BASE - w).coerceAtLeast(0f)
+                item.y = min(120f + off, freeH - h).coerceAtLeast(0f)
             }
-            val off = (images.size % 6) * 40f
-            item.w = w
-            item.h = h
-            item.x = 100f + off
-            item.y = 120f + off
         }
         images.add(item)
     }
@@ -99,6 +120,7 @@ fun EditorState.addText(x: Float, y: Float) {
     texts.add(t)
     selected = t
     gridOpen = false
+    frameOpen = false
 }
 
 class Cell(val x: Float, val y: Float, val w: Float, val h: Float)
@@ -135,8 +157,10 @@ fun collageOptions(n: Int): List<CollageOpt> {
     return out.take(16)
 }
 
-fun collageCells(o: CollageOpt, size: Float, gap: Float): List<Cell> {
+fun collageCells(o: CollageOpt, size: Float, gapIn: Float): List<Cell> {
     val rows = o.rows.size
+    val maxK = max(rows, o.rows.maxOrNull() ?: 1)
+    val gap = min(gapIn, size * 0.6f / max(1, maxK - 1))
     val rh = (size - (rows - 1) * gap) / rows
     val out = ArrayList<Cell>()
     for ((i, k) in o.rows.withIndex()) {
@@ -153,15 +177,18 @@ fun collageCells(o: CollageOpt, size: Float, gap: Float): List<Cell> {
 fun canvasSize(s: EditorState): Pair<Float, Float> {
     val imgs = s.images
     return when (s.mode) {
-        Mode.FREISTIL -> Pair(BASE, 1350f)
+        Mode.FREISTIL -> Pair(BASE, s.freeH)
         Mode.COLLAGE -> Pair(BASE, BASE)
         Mode.REIHE -> {
             if (imgs.isEmpty()) {
                 Pair(BASE, BASE)
-            } else if (s.vertical) {
-                Pair(BASE, imgs.map { BASE * it.bmp.height / it.bmp.width }.sum())
             } else {
-                Pair(imgs.map { BASE * it.bmp.width / it.bmp.height }.sum(), BASE)
+                val g = s.gap.toFloat() * (imgs.size - 1)
+                if (s.vertical) {
+                    Pair(BASE, imgs.map { BASE * it.bmp.height / it.bmp.width }.sum() + g)
+                } else {
+                    Pair(imgs.map { BASE * it.bmp.width / it.bmp.height }.sum() + g, BASE)
+                }
             }
         }
     }
@@ -169,12 +196,13 @@ fun canvasSize(s: EditorState): Pair<Float, Float> {
 
 fun rectsOf(s: EditorState): List<Cell> {
     val imgs = s.images
+    val g = s.gap.toFloat()
     return when (s.mode) {
         Mode.FREISTIL -> imgs.map { Cell(it.x, it.y, it.w, it.h) }
         Mode.COLLAGE -> {
             val opts = collageOptions(imgs.size)
             if (opts.isEmpty()) emptyList()
-            else collageCells(opts[s.collageIdx.coerceIn(0, opts.size - 1)], BASE, 8f)
+            else collageCells(opts[s.collageIdx.coerceIn(0, opts.size - 1)], BASE, g)
         }
         Mode.REIHE -> {
             var p = 0f
@@ -182,14 +210,14 @@ fun rectsOf(s: EditorState): List<Cell> {
                 imgs.map {
                     val h = BASE * it.bmp.height / it.bmp.width
                     val c = Cell(0f, p, BASE, h)
-                    p += h
+                    p += h + g
                     c
                 }
             } else {
                 imgs.map {
                     val w = BASE * it.bmp.width / it.bmp.height
                     val c = Cell(p, 0f, w, BASE)
-                    p += w
+                    p += w + g
                     c
                 }
             }
@@ -223,7 +251,8 @@ fun renderBitmap(s: EditorState): Bitmap {
     val bh = max(1, (ch * k).roundToInt())
     val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
     val c = Canvas(bmp)
-    c.drawColor(android.graphics.Color.WHITE)
+    val free = s.mode == Mode.FREISTIL
+    c.drawColor(if (free) android.graphics.Color.WHITE else s.frameColor.toArgb())
     c.scale(k, k)
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
@@ -241,7 +270,29 @@ fun renderBitmap(s: EditorState): Bitmap {
                 ((iw + sw) / 2f).roundToInt().coerceAtMost(img.bmp.width),
                 ((ih + sh) / 2f).roundToInt().coerceAtMost(img.bmp.height)
             )
-            c.drawBitmap(img.bmp, src, RectF(r.x, r.y, r.x + r.w, r.y + r.h), paint)
+            val dst = RectF(r.x, r.y, r.x + r.w, r.y + r.h)
+            val rad = s.rundung / 100f * min(r.w, r.h) / 2f
+            if (rad > 0.5f) {
+                val layer = c.saveLayer(dst, null)
+                c.drawBitmap(img.bmp, src, dst, paint)
+                val mp = Paint(Paint.ANTI_ALIAS_FLAG)
+                mp.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+                mp.color = android.graphics.Color.BLACK
+                c.drawRoundRect(dst, rad, rad, mp)
+                c.restoreToCount(layer)
+            } else {
+                c.drawBitmap(img.bmp, src, dst, paint)
+            }
+            if (free && s.gap > 0) {
+                val b = s.gap * 0.6f
+                val bp = Paint(Paint.ANTI_ALIAS_FLAG)
+                bp.style = Paint.Style.STROKE
+                bp.strokeWidth = b
+                bp.color = s.frameColor.toArgb()
+                val inner = RectF(dst.left + b / 2f, dst.top + b / 2f, dst.right - b / 2f, dst.bottom - b / 2f)
+                val ir = max(0f, rad - b / 2f)
+                c.drawRoundRect(inner, ir, ir, bp)
+            }
         }
     }
 
