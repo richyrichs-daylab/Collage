@@ -36,10 +36,13 @@ const val BASE = 1080f
 
 enum class Mode { FREISTIL, COLLAGE, REIHE }
 
-val FONT_NAMES = listOf("Standard", "Serif", "Schreibmaschine", "Handschrift", "Fett", "Kursiv")
+val FONT_NAMES = listOf("Russo One", "Serif", "Schreibmaschine", "Handschrift", "Fett", "Kursiv")
+
+// Wird beim Start der App gesetzt (MainActivity)
+var russoTypeface: Typeface? = null
 
 fun typefaceOf(i: Int): Typeface = when (i) {
-    0 -> Typeface.SANS_SERIF
+    0 -> russoTypeface ?: Typeface.SANS_SERIF
     1 -> Typeface.SERIF
     2 -> Typeface.MONOSPACE
     3 -> Typeface.create("cursive", Typeface.NORMAL)
