@@ -11,8 +11,29 @@ android {
         applicationId = "de.bildgestalter"
         minSdk = 29
         targetSdk = 34
-        versionCode = 2
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
         versionName = "2.0"
+    }
+
+    val keystoreFile = file("release.jks")
+    signingConfigs {
+        create("fest") {
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storeType = "pkcs12"
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "bildgestalter"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("debug") {
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("fest")
+            }
+        }
     }
 
     compileOptions {
