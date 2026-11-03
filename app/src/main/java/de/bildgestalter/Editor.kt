@@ -34,6 +34,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -44,11 +46,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -135,6 +139,14 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
         }
     }
 
+    val toggleFrame: () -> Unit = {
+        state.frameOpen = !state.frameOpen
+        if (state.frameOpen) {
+            state.gridOpen = false
+            state.selected = null
+        }
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -214,7 +226,8 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
         val sel = state.selected
         if (sel is TxtItem) TextPanel(sel)
         if (state.gridOpen && state.mode == Mode.COLLAGE) GridPicker(state)
-        BottomBar(state, pick, addText)
+        if (state.frameOpen) FramePanel(state)
+        BottomBar(state, pick, addText, toggleFrame)
     }
 }
 
@@ -223,16 +236,19 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
     val density = LocalDensity.current
     val rects = rectsOf(state)
     val free = state.mode == Mode.FREISTIL
+    val sw = (cw * scale).roundToInt()
+    val sh = (ch * scale).roundToInt()
+    val stageBg = if (free) Color.White else state.frameColor
     Box(
         Modifier
-            .size(with(density) { (cw * scale).toDp() }, with(density) { (ch * scale).toDp() })
-            .background(Color.White)
+            .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
+            .background(stageBg)
     ) {
         if (state.images.isEmpty() && state.texts.isEmpty()) {
             Text(
                 when (state.mode) {
                     Mode.FREISTIL -> "Füge Bilder oder Text hinzu"
-                    Mode.COLLAGE -> "Tippe auf „Hinzufügen“"
+                    Mode.COLLAGE -> "Tippe auf „+“"
                     Mode.REIHE -> "Füge Bilder hinzu"
                 },
                 color = Color(0xFF999999),
@@ -244,8 +260,17 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
             if (r != null) {
                 key(img) {
                     val bitmap = remember(img) { img.bmp.asImageBitmap() }
+                    // Pixelgenaue Kanten: keine Lücken durch Rundung
+                    val x0 = (r.x * scale).roundToInt()
+                    val y0 = (r.y * scale).roundToInt()
+                    val x1 = ((r.x + r.w) * scale).roundToInt()
+                    val y1 = ((r.y + r.h) * scale).roundToInt()
+                    val radPx = state.rundung / 100f * min(r.w, r.h) / 2f * scale
+                    val shape = RoundedCornerShape(with(density) { radPx.toDp() })
+                    val borderPx = state.gap * 0.6f * scale
                     ItemFrame(
-                        x = r.x * scale, y = r.y * scale, w = r.w * scale, h = r.h * scale,
+                        x = x0.toFloat(), y = y0.toFloat(),
+                        w = (x1 - x0).toFloat(), h = (y1 - y0).toFloat(),
                         selected = state.selected === img,
                         movable = free, resizable = free,
                         onSelect = { state.selected = img; state.gridOpen = false },
@@ -265,7 +290,14 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
                             bitmap = bitmap,
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clip(shape)
+                                .then(
+                                    if (free && borderPx >= 1f)
+                                        Modifier.border(with(density) { borderPx.toDp() }, state.frameColor, shape)
+                                    else Modifier
+                                )
                         )
                     }
                 }
@@ -277,7 +309,7 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
                     x = t.x * scale, y = t.y * scale, w = t.w * scale, h = null,
                     selected = state.selected === t,
                     movable = true, resizable = true,
-                    onSelect = { state.selected = t; state.gridOpen = false },
+                    onSelect = { state.selected = t; state.gridOpen = false; state.frameOpen = false },
                     onMove = { dx, dy -> t.x += dx / scale; t.y += dy / scale },
                     onResize = { d ->
                         val nw = max(60f, t.w + d / scale)
@@ -321,27 +353,27 @@ fun ItemFrame(
     content: @Composable () -> Unit
 ) {
     val density = LocalDensity.current
-    val pad = 22.dp
-    val padPx = with(density) { pad.toPx() }
+    val padPx = with(density) { 22.dp.roundToPx() }
+    val padDp = with(density) { padPx.toDp() }
     val curSelect by rememberUpdatedState(onSelect)
     val curMove by rememberUpdatedState(onMove)
     val curResize by rememberUpdatedState(onResize)
     val curDelete by rememberUpdatedState(onDelete)
-    val wDp = with(density) { w.toDp() }
+    val totalW = with(density) { (w.roundToInt() + 2 * padPx).toDp() }
     val sizeMod = if (h != null) {
-        Modifier.size(wDp + pad * 2, with(density) { h.toDp() } + pad * 2)
+        Modifier.size(totalW, with(density) { (h.roundToInt() + 2 * padPx).toDp() })
     } else {
-        Modifier.width(wDp + pad * 2)
+        Modifier.width(totalW)
     }
 
     Box(
         Modifier
-            .offset { IntOffset((x - padPx).roundToInt(), (y - padPx).roundToInt()) }
+            .offset { IntOffset(x.roundToInt() - padPx, y.roundToInt() - padPx) }
             .then(sizeMod)
     ) {
         Box(
             Modifier
-                .padding(pad)
+                .padding(padDp)
                 .pointerInput(Unit) { detectTapGestures(onTap = { curSelect() }) }
                 .pointerInput(movable) {
                     if (movable) {
@@ -478,6 +510,96 @@ fun TextPanel(t: TxtItem) {
     }
 }
 
+/* ---------- Rahmen-Panel ---------- */
+
+@Composable
+private fun ThicknessIcon() {
+    Canvas(Modifier.size(28.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        drawRoundRect(
+            c, Offset(sw / 2f, sw / 2f),
+            Size(size.width - sw, size.height - sw),
+            CornerRadius(3.dp.toPx()), Stroke(sw)
+        )
+        val y = size.height * 0.4f
+        drawLine(c, Offset(0f, y), Offset(size.width, y), sw)
+        drawLine(c, Offset(size.width / 2f, y), Offset(size.width / 2f, size.height), sw)
+    }
+}
+
+@Composable
+private fun RoundnessIcon(percent: Int) {
+    Canvas(Modifier.size(width = 28.dp, height = 22.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        val r = percent / 100f * (min(size.width, size.height) - sw) / 2f
+        drawRoundRect(
+            c, Offset(sw / 2f, sw / 2f),
+            Size(size.width - sw, size.height - sw),
+            CornerRadius(r), Stroke(sw)
+        )
+    }
+}
+
+@Composable
+private fun ColorSquareIcon(color: Color) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(color)
+            .border(1.5.dp, Color(0xFF444444), RoundedCornerShape(4.dp))
+    )
+}
+
+@Composable
+private fun FrameSlider(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
+    Slider(
+        value = value.toFloat(),
+        onValueChange = { onChange(it.roundToInt()) },
+        valueRange = 0f..100f,
+        steps = 99,
+        modifier = modifier,
+        colors = SliderDefaults.colors(
+            thumbColor = Teal,
+            activeTrackColor = Teal,
+            inactiveTrackColor = Color(0xFFCCCCCC),
+            activeTickColor = Color.Transparent,
+            inactiveTickColor = Color.Transparent
+        )
+    )
+}
+
+@Composable
+fun FramePanel(state: EditorState) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF4F4F4))
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon() }
+            FrameSlider(state.gap, { state.gap = it }, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { RoundnessIcon(state.rundung) }
+            FrameSlider(state.rundung, { state.rundung = it }, Modifier.weight(1f))
+        }
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ColorSquareIcon(state.frameColor) }
+            Row(
+                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                PALETTE.forEach { c -> ColorDot(c, state.frameColor == c) { state.frameColor = c } }
+            }
+        }
+    }
+}
+
 @Composable
 fun GridPicker(state: EditorState) {
     val opts = collageOptions(state.images.size)
@@ -586,7 +708,7 @@ fun FormatButton(state: EditorState, modifier: Modifier) {
 }
 
 @Composable
-fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit) {
+fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -597,18 +719,24 @@ fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit) {
     ) {
         when (state.mode) {
             Mode.FREISTIL -> {
-                BarButton("Weitere Bilder", 18, Modifier.weight(1f), onAdd)
+                BarButton("+", 34, Modifier.weight(1f), onAdd)
+                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
                 BarButton("Text", 22, Modifier.weight(1f), onText)
             }
             Mode.REIHE -> {
                 FormatButton(state, Modifier.weight(1f))
-                BarButton("+ Bilder", 20, Modifier.weight(1f), onAdd)
-                BarButton("Text", 22, Modifier.weight(1f), onText)
+                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
+                BarButton("+", 34, Modifier.weight(1f), onAdd)
+                BarButton("Text", 20, Modifier.weight(1f), onText)
             }
             Mode.COLLAGE -> {
-                BarButton("Hinzufügen", 15, Modifier.weight(1f), onAdd)
-                BarButton("Raster", 20, Modifier.weight(1f)) { state.gridOpen = !state.gridOpen }
-                BarButton("Text", 22, Modifier.weight(1f), onText)
+                BarButton("+", 34, Modifier.weight(1f), onAdd)
+                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
+                BarButton("Raster", 16, Modifier.weight(1f)) {
+                    state.gridOpen = !state.gridOpen
+                    if (state.gridOpen) state.frameOpen = false
+                }
+                BarButton("Text", 20, Modifier.weight(1f), onText)
             }
         }
     }
