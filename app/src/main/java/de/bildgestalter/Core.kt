@@ -3,14 +3,19 @@ package de.bildgestalter
 import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
+import android.graphics.ComposeShader
 import android.graphics.ImageDecoder
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Environment
@@ -26,10 +31,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.math.abs
 import kotlin.math.ceil
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 import kotlin.math.sqrt
 
 const val BASE = 1080f
@@ -48,6 +56,109 @@ fun typefaceOf(i: Int): Typeface = when (i) {
     3 -> Typeface.create("cursive", Typeface.NORMAL)
     4 -> Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     else -> Typeface.create(Typeface.SANS_SERIF, Typeface.ITALIC)
+}
+
+/* ---------- Glitzer-Farben ---------- */
+
+// Spezielle Farbwerte, die als Glitzer gezeichnet werden
+val GOLD = Color(0xFFD4AF37)
+val SILVER = Color(0xFFC0C0C0)
+
+fun glitterKind(c: Color?): Int = when (c) {
+    GOLD -> 1
+    SILVER -> 2
+    else -> 0
+}
+
+private const val TILE_PX = 256
+private const val TILE_UNITS = 60f
+private val tileCache = HashMap<Int, Bitmap>()
+
+private fun glitterTile(kind: Int): Bitmap = synchronized(tileCache) {
+    tileCache.getOrPut(kind) {
+        val b = Bitmap.createBitmap(TILE_PX, TILE_PX, Bitmap.Config.ARGB_8888)
+        val cv = Canvas(b)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        val rnd = java.util.Random(if (kind == 1) 17L else 29L)
+        // Dunkle Pünktchen für Tiefe
+        for (i in 0 until 90) {
+            p.color = if (kind == 1) {
+                android.graphics.Color.argb(70 + rnd.nextInt(80), 120, 80, 0)
+            } else {
+                android.graphics.Color.argb(70 + rnd.nextInt(80), 70, 70, 80)
+            }
+            cv.drawCircle(
+                rnd.nextFloat() * TILE_PX, rnd.nextFloat() * TILE_PX,
+                2f + rnd.nextFloat() * 4f, p
+            )
+        }
+        // Helle Glitzerpunkte
+        for (i in 0 until 170) {
+            val a = 110 + rnd.nextInt(145)
+            p.color = if (kind == 1) {
+                android.graphics.Color.argb(a, 255, 240 + rnd.nextInt(15), 170 + rnd.nextInt(60))
+            } else {
+                android.graphics.Color.argb(a, 255, 255, 255)
+            }
+            cv.drawCircle(
+                rnd.nextFloat() * TILE_PX, rnd.nextFloat() * TILE_PX,
+                2f + rnd.nextFloat() * 5f, p
+            )
+        }
+        // Sternchen
+        val sp = Paint(Paint.ANTI_ALIAS_FLAG)
+        sp.style = Paint.Style.STROKE
+        sp.strokeCap = Paint.Cap.ROUND
+        sp.strokeWidth = 3f
+        sp.color = android.graphics.Color.argb(230, 255, 255, 235)
+        val fp = Paint(Paint.ANTI_ALIAS_FLAG)
+        fp.color = android.graphics.Color.WHITE
+        for (i in 0 until 16) {
+            val x = 20f + rnd.nextFloat() * (TILE_PX - 40f)
+            val y = 20f + rnd.nextFloat() * (TILE_PX - 40f)
+            val l = 9f + rnd.nextFloat() * 15f
+            cv.drawLine(x - l, y, x + l, y, sp)
+            cv.drawLine(x, y - l, x, y + l, sp)
+            cv.drawCircle(x, y, 3.5f, fp)
+        }
+        b
+    }
+}
+
+/**
+ * Metallverlauf mit Glitzer. w, h: Größe des Bereichs (für den Verlauf),
+ * k: Pixel pro Einheit (Größe der Glitzerpunkte).
+ */
+fun glitterShader(kind: Int, w: Float, h: Float, k: Float): Shader {
+    val cols = if (kind == 1) {
+        intArrayOf(
+            0xFFB8860B.toInt(), 0xFFFFE27A.toInt(), 0xFFD4AF37.toInt(), 0xFFFFF3B0.toInt(),
+            0xFFC9971C.toInt(), 0xFFFFE27A.toInt(), 0xFFB8860B.toInt()
+        )
+    } else {
+        intArrayOf(
+            0xFF8E8E8E.toInt(), 0xFFF5F5F5.toInt(), 0xFFBDBDBD.toInt(), 0xFFFFFFFF.toInt(),
+            0xFFA0A0A0.toInt(), 0xFFEDEDED.toInt(), 0xFF8E8E8E.toInt()
+        )
+    }
+    val grad = LinearGradient(0f, 0f, max(1f, w), max(1f, h), cols, null, Shader.TileMode.MIRROR)
+    val tile = BitmapShader(glitterTile(kind), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    val m = Matrix()
+    val sc = TILE_UNITS * k / TILE_PX
+    m.setScale(sc, sc)
+    tile.setLocalMatrix(m)
+    return ComposeShader(grad, tile, PorterDuff.Mode.SRC_OVER)
+}
+
+fun applyFill(p: Paint, c: Color, w: Float, h: Float, k: Float = 1f) {
+    val gk = glitterKind(c)
+    if (gk == 0) {
+        p.shader = null
+        p.color = c.toArgb()
+    } else {
+        p.color = android.graphics.Color.WHITE
+        p.shader = glitterShader(gk, w, h, k)
+    }
 }
 
 /* ---------- Seitenverhältnisse ---------- */
@@ -98,6 +209,12 @@ class TxtItem {
     var color by mutableStateOf(Color.Black)
     var bg by mutableStateOf<Color?>(null)
     var align by mutableStateOf(1)
+
+    var transp by mutableStateOf(0)      // Transparenz 0..100 (100 = unsichtbar)
+    var corner by mutableStateOf(0)      // Abgerundete Ecken 0..100
+    var lineSp by mutableStateOf(50)     // Zeilenabstand 0..100 (50 = normal)
+    var letterSp by mutableStateOf(50)   // Buchstabenabstand 0..100 (50 = normal)
+    var curve by mutableStateOf(0)       // Zeilenkrümmung -100..100
 }
 
 class EditorState(val mode: Mode) {
@@ -165,6 +282,194 @@ fun EditorState.addText(x: Float, y: Float, w: Float = 540f) {
     selected = t
     gridOpen = false
     frameOpen = false
+}
+
+/* ---------- Text: Geometrie, Krümmung, Zeichnen ---------- */
+
+class Pt(val x: Float, val y: Float)
+
+/**
+ * Verbiegt ein Rechteck (w x h) entlang eines Kreisbogens.
+ * c > 0: Bogen nach oben, c < 0: Bogen nach unten, +-100 = Vollkreis.
+ */
+class Warp(val w: Float, val h: Float, val c: Int) {
+    val on = c != 0
+    private val theta = abs(c) / 100f * (2f * Math.PI.toFloat())
+    val r = if (on) w / theta else 0f
+
+    fun phi(u: Float): Float = if (on) (u - w / 2f) / r else 0f
+
+    fun map(u: Float, v: Float): Pt {
+        if (!on) return Pt(u, v)
+        val p = phi(u)
+        return if (c > 0) {
+            val rho = max(0f, r + (h / 2f - v))
+            Pt(w / 2f + rho * sin(p), h / 2f + r - rho * cos(p))
+        } else {
+            val rho = max(0f, r + (v - h / 2f))
+            Pt(w / 2f + rho * sin(p), h / 2f - r + rho * cos(p))
+        }
+    }
+}
+
+/** Umriss eines Rechtecks mit gerundeten Ecken als Punktfolge (im Uhrzeigersinn). */
+fun outlinePoints(w: Float, h: Float, rad: Float, n: Int): List<Pt> {
+    val rr = min(rad, min(w, h) / 2f)
+    val out = ArrayList<Pt>()
+    for (i in 0..n) out.add(Pt(rr + (w - 2 * rr) * i / n, 0f))
+    fun arc(cx: Float, cy: Float, a0: Float, a1: Float) {
+        for (i in 1..8) {
+            val a = Math.toRadians((a0 + (a1 - a0) * i / 8f).toDouble())
+            out.add(Pt(cx + rr * cos(a).toFloat(), cy + rr * sin(a).toFloat()))
+        }
+    }
+    arc(w - rr, rr, -90f, 0f)
+    out.add(Pt(w, h - rr))
+    arc(w - rr, h - rr, 0f, 90f)
+    for (i in 1..n) out.add(Pt(w - rr - (w - 2 * rr) * i / n, h))
+    arc(rr, h - rr, 90f, 180f)
+    out.add(Pt(0f, rr))
+    arc(rr, rr, 180f, 270f)
+    return out
+}
+
+fun lineMult(p: Int): Float = if (p <= 50) 0.5f + p / 100f else 1f + (p - 50) / 50f
+
+fun letterEm(p: Int): Float =
+    if (p <= 50) (p - 50) / 50f * 0.1f else (p - 50) / 50f * 0.5f
+
+class TextGeom(
+    val sl: StaticLayout,
+    val w: Float, val h: Float, val pad: Float, val rad: Float,
+    val bx0: Float, val by0: Float, val bx1: Float, val by1: Float,
+    val path: Path?,
+    val tl: Pt, val br: Pt,
+    val margin: Float
+)
+
+fun textGeom(t: TxtItem): TextGeom {
+    val pad = t.fs * 0.25f
+    val tp = TextPaint(Paint.ANTI_ALIAS_FLAG)
+    tp.textSize = t.fs
+    tp.color = if (glitterKind(t.color) != 0) android.graphics.Color.BLACK else t.color.toArgb()
+    tp.typeface = typefaceOf(t.font)
+    tp.letterSpacing = letterEm(t.letterSp)
+    val inner = max(1, (t.w - 2 * pad).roundToInt())
+    val txt = if (t.text.isEmpty()) " " else t.text
+    val al = when (t.align) {
+        0 -> Layout.Alignment.ALIGN_NORMAL
+        2 -> Layout.Alignment.ALIGN_OPPOSITE
+        else -> Layout.Alignment.ALIGN_CENTER
+    }
+    val sl = StaticLayout.Builder.obtain(txt, 0, txt.length, tp, inner)
+        .setAlignment(al)
+        .setIncludePad(false)
+        .setLineSpacing(0f, lineMult(t.lineSp))
+        .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+        .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+        .build()
+    val w = t.w
+    val h = sl.height + 2 * pad
+    val rad = t.corner / 100f * min(w, h) / 2f
+    val a = min(rad, min(w, h) / 2f) * 0.29289322f
+    val margin = t.fs * 0.5f
+    val wp = Warp(w, h, t.curve)
+    if (!wp.on) {
+        return TextGeom(sl, w, h, pad, rad, 0f, 0f, w, h, null, Pt(a, a), Pt(w - a, h - a), margin)
+    }
+    val pts = outlinePoints(w, h, rad, 96).map { wp.map(it.x, it.y) }
+    var x0 = Float.MAX_VALUE
+    var y0 = Float.MAX_VALUE
+    var x1 = -Float.MAX_VALUE
+    var y1 = -Float.MAX_VALUE
+    val path = Path()
+    pts.forEachIndexed { i, p ->
+        x0 = min(x0, p.x); y0 = min(y0, p.y)
+        x1 = max(x1, p.x); y1 = max(y1, p.y)
+        if (i == 0) path.moveTo(p.x, p.y) else path.lineTo(p.x, p.y)
+    }
+    path.close()
+    return TextGeom(
+        sl, w, h, pad, rad, x0, y0, x1, y1, path,
+        wp.map(a, a), wp.map(w - a, h - a), margin
+    )
+}
+
+private fun drawGlyphs(c: Canvas, t: TxtItem, g: TextGeom) {
+    val sl = g.sl
+    if (t.curve == 0) {
+        c.save()
+        c.translate(g.pad, g.pad)
+        sl.draw(c)
+        c.restore()
+        return
+    }
+    val gp = TextPaint(sl.paint)
+    gp.letterSpacing = 0f
+    val txt = sl.text
+    val wp = Warp(g.w, g.h, t.curve)
+    val sgn = if (t.curve > 0) 1f else -1f
+    for (line in 0 until sl.lineCount) {
+        val ls = sl.getLineStart(line)
+        val le = sl.getLineEnd(line)
+        val base = g.pad + sl.getLineBaseline(line)
+        var i = ls
+        while (i < le) {
+            val cp = Character.codePointAt(txt, i)
+            val n = Character.charCount(cp)
+            val next = i + n
+            if (cp > 32) {
+                val x0 = sl.getPrimaryHorizontal(i)
+                val x1 = if (next < le) sl.getPrimaryHorizontal(next) else sl.getLineRight(line)
+                val s = String(Character.toChars(cp))
+                val wd = gp.measureText(s)
+                val cx = if (x1 > x0) (x0 + x1) / 2f else x0 + wd / 2f
+                val u = g.pad + cx
+                val p = wp.map(u, base)
+                c.save()
+                c.translate(p.x, p.y)
+                c.rotate(sgn * wp.phi(u) * 57.29578f)
+                c.drawText(s, -wd / 2f, 0f, gp)
+                c.restore()
+            }
+            i = next
+        }
+    }
+}
+
+/** Zeichnet ein Textfeld. Ursprung (0, 0) = linke obere Ecke des unverbogenen Feldes. */
+fun drawTextItem(c: Canvas, t: TxtItem, g: TextGeom) {
+    val alpha = ((100 - t.transp) * 255 / 100).coerceIn(0, 255)
+    if (alpha <= 0) return
+    val m = g.margin
+    val l = g.bx0 - m
+    val tp = g.by0 - m
+    val r = g.bx1 + m
+    val b = g.by1 + m
+    val outer = c.saveLayerAlpha(l, tp, r, b, alpha)
+
+    val bg = t.bg
+    if (bg != null) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        applyFill(p, bg, g.w, g.h)
+        val path = g.path
+        if (path == null) c.drawRoundRect(0f, 0f, g.w, g.h, g.rad, g.rad, p)
+        else c.drawPath(path, p)
+    }
+
+    val gk = glitterKind(t.color)
+    if (gk != 0) {
+        val inner = c.saveLayer(l, tp, r, b, null)
+        drawGlyphs(c, t, g)
+        val gp = Paint()
+        gp.shader = glitterShader(gk, g.w, g.h, 1f)
+        gp.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        c.drawRect(l, tp, r, b, gp)
+        c.restoreToCount(inner)
+    } else {
+        drawGlyphs(c, t, g)
+    }
+    c.restoreToCount(outer)
 }
 
 /* ---------- Collage-Raster ---------- */
@@ -335,8 +640,14 @@ fun renderBitmap(context: Context, s: EditorState): Bitmap {
     val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
     val c = Canvas(bmp)
     val free = s.mode == Mode.FREISTIL
-    c.drawColor(if (free) android.graphics.Color.WHITE else s.frameColor.toArgb())
     c.scale(k, k)
+    if (free) {
+        c.drawColor(android.graphics.Color.WHITE)
+    } else {
+        val bgp = Paint()
+        applyFill(bgp, s.frameColor, cw, ch)
+        c.drawRect(0f, 0f, cw, ch, bgp)
+    }
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     s.images.forEachIndexed { i, img ->
@@ -383,7 +694,7 @@ fun renderBitmap(context: Context, s: EditorState): Bitmap {
                 val bp = Paint(Paint.ANTI_ALIAS_FLAG)
                 bp.style = Paint.Style.STROKE
                 bp.strokeWidth = b
-                bp.color = s.frameColor.toArgb()
+                applyFill(bp, s.frameColor, cw, ch)
                 val inner = RectF(dst.left + b / 2f, dst.top + b / 2f, dst.right - b / 2f, dst.bottom - b / 2f)
                 val ir = max(0f, rad - b / 2f)
                 c.drawRoundRect(inner, ir, ir, bp)
@@ -393,33 +704,10 @@ fun renderBitmap(context: Context, s: EditorState): Bitmap {
     }
 
     for (t in s.texts) {
-        val pad = t.fs * 0.25f
-        val tp = TextPaint(Paint.ANTI_ALIAS_FLAG)
-        tp.textSize = t.fs
-        tp.color = t.color.toArgb()
-        tp.typeface = typefaceOf(t.font)
-        val inner = max(1, (t.w - 2 * pad).roundToInt())
-        val txt = if (t.text.isEmpty()) " " else t.text
-        val al = when (t.align) {
-            0 -> Layout.Alignment.ALIGN_NORMAL
-            2 -> Layout.Alignment.ALIGN_OPPOSITE
-            else -> Layout.Alignment.ALIGN_CENTER
-        }
-        val sl = StaticLayout.Builder.obtain(txt, 0, txt.length, tp, inner)
-            .setAlignment(al)
-            .setIncludePad(false)
-            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
-            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-            .build()
-        val bgc = t.bg
-        if (bgc != null) {
-            val bp = Paint()
-            bp.color = bgc.toArgb()
-            c.drawRect(t.x, t.y, t.x + t.w, t.y + sl.height + 2 * pad, bp)
-        }
+        val g = textGeom(t)
         c.save()
-        c.translate(t.x + pad, t.y + pad)
-        sl.draw(c)
+        c.translate(t.x, t.y)
+        drawTextItem(c, t, g)
         c.restore()
     }
     return bmp
