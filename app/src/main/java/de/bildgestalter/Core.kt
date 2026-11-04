@@ -50,7 +50,38 @@ fun typefaceOf(i: Int): Typeface = when (i) {
     else -> Typeface.create(Typeface.SANS_SERIF, Typeface.ITALIC)
 }
 
-class ImgItem(val bmp: Bitmap) {
+/* ---------- Seitenverhältnisse ---------- */
+
+class Ratio(val w: Int, val h: Int) {
+    val label: String get() = "$w:$h"
+}
+
+val RATIOS = listOf(
+    Ratio(1, 1), Ratio(4, 5), Ratio(3, 4), Ratio(2, 3), Ratio(9, 16), Ratio(1, 2),
+    Ratio(5, 4), Ratio(4, 3), Ratio(3, 2), Ratio(16, 9), Ratio(2, 1)
+)
+
+/* ---------- Bildauflösung ---------- */
+
+val QUALITY_NAMES = listOf("HD", "durchschnittlich", "sparsam")
+
+// Längste Seite beim Export in Pixeln
+val QUALITY_PX = floatArrayOf(5000f, 2500f, 1080f)
+
+fun loadQuality(context: Context, mode: Mode): Int =
+    context.getSharedPreferences("bildgestalter", Context.MODE_PRIVATE)
+        .getInt("quality_" + mode.name, 0).coerceIn(0, 2)
+
+fun saveQuality(context: Context, mode: Mode, q: Int) {
+    context.getSharedPreferences("bildgestalter", Context.MODE_PRIVATE)
+        .edit().putInt("quality_" + mode.name, q).apply()
+}
+
+/* ---------- Daten ---------- */
+
+class Loaded(val bmp: Bitmap, val uri: Uri)
+
+class ImgItem(val bmp: Bitmap, val uri: Uri?) {
     var x by mutableStateOf(0f)
     var y by mutableStateOf(0f)
     var w by mutableStateOf(500f)
@@ -83,25 +114,32 @@ class EditorState(val mode: Mode) {
     var rundung by mutableStateOf(0)      // "Rundung" 0..100
     var frameColor by mutableStateOf(Color.White)
 
-    // Freistil: Höhe der Fläche (passt sich dem ersten Bild an)
-    var freeH by mutableStateOf(1350f)
+    // Format (Freistil und Collage), Standard 1:1
+    var ratioIdx by mutableStateOf(0)
+
+    // Bildauflösung: 0 = HD, 1 = durchschnittlich, 2 = sparsam
+    var quality by mutableStateOf(0)
 }
 
-fun EditorState.addImages(bmps: List<Bitmap>) {
-    for (b in bmps) {
-        val item = ImgItem(b)
+fun EditorState.addImages(list: List<Loaded>) {
+    val (cw, ch) = canvasSize(this)
+    for (l in list) {
+        val b = l.bmp
+        val item = ImgItem(b, l.uri)
         if (mode == Mode.FREISTIL) {
+            val iw = b.width.toFloat()
+            val ih = b.height.toFloat()
             if (images.isEmpty()) {
-                // Erstes Bild füllt die ganze Fläche, keine Leerflächen
-                freeH = (BASE * b.height / b.width).coerceIn(540f, 2160f)
-                item.x = 0f
-                item.y = 0f
-                item.w = BASE
-                item.h = freeH
+                // Erstes Bild füllt das Feld komplett (keine Leerflächen)
+                val s = max(cw / iw, ch / ih)
+                item.w = iw * s
+                item.h = ih * s
+                item.x = (cw - item.w) / 2f
+                item.y = (ch - item.h) / 2f
             } else {
-                var w = 540f
-                var h = w * b.height / b.width
-                val maxH = freeH * 0.7f
+                var w = cw * 0.5f
+                var h = w * ih / iw
+                val maxH = ch * 0.7f
                 if (h > maxH) {
                     w *= maxH / h
                     h = maxH
@@ -109,23 +147,27 @@ fun EditorState.addImages(bmps: List<Bitmap>) {
                 val off = (images.size % 6) * 40f
                 item.w = w
                 item.h = h
-                item.x = min(100f + off, BASE - w).coerceAtLeast(0f)
-                item.y = min(120f + off, freeH - h).coerceAtLeast(0f)
+                item.x = min(cw * 0.1f + off, cw - w).coerceAtLeast(0f)
+                item.y = min(ch * 0.1f + off, ch - h).coerceAtLeast(0f)
             }
         }
         images.add(item)
     }
 }
 
-fun EditorState.addText(x: Float, y: Float) {
+fun EditorState.addText(x: Float, y: Float, w: Float = 540f) {
     val t = TxtItem()
     t.x = x
     t.y = y
+    t.w = w
+    t.fs = 64f * w / 540f
     texts.add(t)
     selected = t
     gridOpen = false
     frameOpen = false
 }
+
+/* ---------- Collage-Raster ---------- */
 
 class Cell(val x: Float, val y: Float, val w: Float, val h: Float)
 
@@ -161,18 +203,22 @@ fun collageOptions(n: Int): List<CollageOpt> {
     return out.take(16)
 }
 
-fun collageCells(o: CollageOpt, size: Float, gapIn: Float): List<Cell> {
+fun collageCells(o: CollageOpt, W: Float, H: Float, gapIn: Float): List<Cell> {
+    // Normal: Zeilen stapeln sich von oben nach unten.
+    // Transponiert: "Zeilen" sind Spalten, die sich von links nach rechts stapeln.
+    val mainLen = if (o.transposed) W else H
+    val crossLen = if (o.transposed) H else W
     val rows = o.rows.size
     val maxK = max(rows, o.rows.maxOrNull() ?: 1)
-    val gap = min(gapIn, size * 0.6f / max(1, maxK - 1))
-    val rh = (size - (rows - 1) * gap) / rows
+    val gap = min(gapIn, min(W, H) * 0.6f / max(1, maxK - 1))
+    val rh = (mainLen - (rows - 1) * gap) / rows
     val out = ArrayList<Cell>()
     for ((i, k) in o.rows.withIndex()) {
-        val cw = (size - (k - 1) * gap) / k
+        val cw = (crossLen - (k - 1) * gap) / k
         for (j in 0 until k) {
-            val x = j * (cw + gap)
-            val y = i * (rh + gap)
-            out.add(if (o.transposed) Cell(y, x, rh, cw) else Cell(x, y, cw, rh))
+            val a = j * (cw + gap)
+            val b = i * (rh + gap)
+            out.add(if (o.transposed) Cell(b, a, rh, cw) else Cell(a, b, cw, rh))
         }
     }
     return out
@@ -181,8 +227,10 @@ fun collageCells(o: CollageOpt, size: Float, gapIn: Float): List<Cell> {
 fun canvasSize(s: EditorState): Pair<Float, Float> {
     val imgs = s.images
     return when (s.mode) {
-        Mode.FREISTIL -> Pair(BASE, s.freeH)
-        Mode.COLLAGE -> Pair(BASE, BASE)
+        Mode.FREISTIL, Mode.COLLAGE -> {
+            val r = RATIOS[s.ratioIdx.coerceIn(0, RATIOS.size - 1)]
+            if (r.w >= r.h) Pair(BASE, BASE * r.h / r.w) else Pair(BASE * r.w / r.h, BASE)
+        }
         Mode.REIHE -> {
             if (imgs.isEmpty()) {
                 Pair(BASE, BASE)
@@ -204,9 +252,10 @@ fun rectsOf(s: EditorState): List<Cell> {
     return when (s.mode) {
         Mode.FREISTIL -> imgs.map { Cell(it.x, it.y, it.w, it.h) }
         Mode.COLLAGE -> {
+            val (cw, ch) = canvasSize(s)
             val opts = collageOptions(imgs.size)
             if (opts.isEmpty()) emptyList()
-            else collageCells(opts[s.collageIdx.coerceIn(0, opts.size - 1)], BASE, g)
+            else collageCells(opts[s.collageIdx.coerceIn(0, opts.size - 1)], cw, ch, g)
         }
         Mode.REIHE -> {
             var p = 0f
@@ -229,28 +278,58 @@ fun rectsOf(s: EditorState): List<Cell> {
     }
 }
 
-suspend fun loadBitmaps(context: Context, uris: List<Uri>): List<Bitmap> =
+/* ---------- Bilder laden ---------- */
+
+// Kleine Vorschau-Bilder für die Bearbeitung (maximal 1800 px)
+suspend fun loadBitmaps(context: Context, uris: List<Uri>): List<Loaded> =
     withContext(Dispatchers.IO) {
         uris.mapNotNull { uri ->
             try {
                 val src = ImageDecoder.createSource(context.contentResolver, uri)
-                ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+                val bmp = ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
                     val m = max(info.size.width, info.size.height)
                     if (m > 1800) decoder.setTargetSampleSize(ceil(m / 1800.0).toInt())
                     decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
                 }
+                Loaded(bmp, uri)
             } catch (e: Throwable) {
                 null
             }
         }
     }
 
-fun renderBitmap(s: EditorState): Bitmap {
+// Original in hoher Auflösung für den Export (nur so groß wie nötig)
+fun decodeForExport(context: Context, uri: Uri?, needW: Float, needH: Float): Bitmap? {
+    if (uri == null) return null
+    return try {
+        val src = ImageDecoder.createSource(context.contentResolver, uri)
+        ImageDecoder.decodeBitmap(src) { decoder, info, _ ->
+            val w0 = info.size.width.toFloat()
+            val h0 = info.size.height.toFloat()
+            var s = max(needW / w0, needH / h0)
+            s = min(s, 1f)
+            s = min(s, 6000f / max(w0, h0))
+            if (s < 0.999f) {
+                decoder.setTargetSize(
+                    max(1, (w0 * s).roundToInt()),
+                    max(1, (h0 * s).roundToInt())
+                )
+            }
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+        }
+    } catch (e: Throwable) {
+        null
+    }
+}
+
+/* ---------- Export ---------- */
+
+fun renderBitmap(context: Context, s: EditorState): Bitmap {
     val (cw, ch) = canvasSize(s)
     val rects = rectsOf(s)
-    var k = 1f
+    var k = QUALITY_PX[s.quality.coerceIn(0, 2)] / BASE
     k = min(k, 16000f / max(cw, ch))
-    k = min(k, sqrt(27_500_000f / (cw * ch)))
+    k = min(k, sqrt(28_000_000f / (cw * ch)))
     val bw = max(1, (cw * k).roundToInt())
     val bh = max(1, (ch * k).roundToInt())
     val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
@@ -263,24 +342,31 @@ fun renderBitmap(s: EditorState): Bitmap {
     s.images.forEachIndexed { i, img ->
         val r = rects.getOrNull(i)
         if (r != null) {
-            val iw = img.bmp.width.toFloat()
-            val ih = img.bmp.height.toFloat()
-            val sc = max(r.w / iw, r.h / ih)
-            val sw = r.w / sc
-            val sh = r.h / sc
-            val src = Rect(
-                ((iw - sw) / 2f).roundToInt().coerceAtLeast(0),
-                ((ih - sh) / 2f).roundToInt().coerceAtLeast(0),
-                ((iw + sw) / 2f).roundToInt().coerceAtMost(img.bmp.width),
-                ((ih + sh) / 2f).roundToInt().coerceAtMost(img.bmp.height)
-            )
+            val pw = img.bmp.width.toFloat()
+            val ph = img.bmp.height.toFloat()
+            val sc = max(r.w / pw, r.h / ph)
+            val fx = min(1f, r.w / sc / pw)
+            val fy = min(1f, r.h / sc / ph)
+
+            val full = decodeForExport(context, img.uri, r.w * k / fx, r.h * k / fy)
+            val srcBmp = full ?: img.bmp
+            val sw0 = srcBmp.width
+            val sh0 = srcBmp.height
+            val cropW = sw0 * fx
+            val cropH = sh0 * fy
+            val left = ((sw0 - cropW) / 2f).roundToInt().coerceIn(0, sw0 - 1)
+            val top = ((sh0 - cropH) / 2f).roundToInt().coerceIn(0, sh0 - 1)
+            val right = (left + cropW).roundToInt().coerceIn(left + 1, sw0)
+            val bottom = (top + cropH).roundToInt().coerceIn(top + 1, sh0)
+            val src = Rect(left, top, right, bottom)
+
             val dst = RectF(r.x, r.y, r.x + r.w, r.y + r.h)
             val rad = s.rundung / 100f * min(r.w, r.h) / 2f
             if (rad > 0.5f) {
                 // Bild in eigener Ebene zeichnen, dann alles AUSSERHALB der
                 // Rundform wegradieren (Gegenteil der Rundform mit DST_OUT)
                 val layer = c.saveLayer(dst, null)
-                c.drawBitmap(img.bmp, src, dst, paint)
+                c.drawBitmap(srcBmp, src, dst, paint)
                 val outside = Path()
                 outside.addRoundRect(dst, rad, rad, Path.Direction.CW)
                 outside.fillType = Path.FillType.INVERSE_WINDING
@@ -290,7 +376,7 @@ fun renderBitmap(s: EditorState): Bitmap {
                 c.drawPath(outside, mp)
                 c.restoreToCount(layer)
             } else {
-                c.drawBitmap(img.bmp, src, dst, paint)
+                c.drawBitmap(srcBmp, src, dst, paint)
             }
             if (free && s.gap > 0) {
                 val b = s.gap * 0.6f
@@ -302,6 +388,7 @@ fun renderBitmap(s: EditorState): Bitmap {
                 val ir = max(0f, rad - b / 2f)
                 c.drawRoundRect(inner, ir, ir, bp)
             }
+            if (full != null) full.recycle()
         }
     }
 
@@ -321,6 +408,8 @@ fun renderBitmap(s: EditorState): Bitmap {
         val sl = StaticLayout.Builder.obtain(txt, 0, txt.length, tp, inner)
             .setAlignment(al)
             .setIncludePad(false)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
             .build()
         val bgc = t.bg
         if (bgc != null) {
@@ -369,10 +458,12 @@ fun saveBitmap(context: Context, bmp: Bitmap, png: Boolean): Boolean {
 suspend fun exportImage(context: Context, s: EditorState): String? =
     withContext(Dispatchers.IO) {
         try {
-            val bmp = renderBitmap(s)
-            if (saveBitmap(context, bmp, true)) "PNG"
+            val bmp = renderBitmap(context, s)
+            val res = if (saveBitmap(context, bmp, true)) "PNG"
             else if (saveBitmap(context, bmp, false)) "JPG"
             else null
+            bmp.recycle()
+            res
         } catch (e: Throwable) {
             null
         }
