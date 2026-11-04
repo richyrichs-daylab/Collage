@@ -1,5 +1,7 @@
 package de.bildgestalter
 
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -53,29 +55,32 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.ShaderBrush
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -86,6 +91,7 @@ import kotlin.math.roundToInt
 
 private val Teal = Color(0xFF3AA8C1)
 private val Grau = Color(0xFFA8A8A8)
+private val DimColor = Color(0xFFC8C8C8).copy(alpha = 0.5f)
 
 // Zusätzlicher Rand um jedes Element für die Eckkreise (x und Pfeil)
 private val ITEM_PAD = 22.dp
@@ -93,23 +99,25 @@ private val ITEM_PAD = 22.dp
 private val PALETTE = listOf(
     Color.Black, Color.White, Color(0xFFE53935), Color(0xFFFB8C00),
     Color(0xFFFDD835), Color(0xFF43A047), Color(0xFFB5ECF2), Color(0xFF1E88E5),
-    Color(0xFF8E24AA), Color(0xFFEC407A), Color(0xFF757575), Color(0xFF6D4C41)
+    Color(0xFF8E24AA), Color(0xFFEC407A), Color(0xFF757575), Color(0xFF6D4C41),
+    GOLD, SILVER
 )
 
-private fun familyOf(i: Int): FontFamily = when (i) {
-    0 -> RussoFamily
-    1 -> FontFamily.Serif
-    2 -> FontFamily.Monospace
-    3 -> FontFamily.Cursive
-    else -> FontFamily.SansSerif
+/** Brush für eine Vorschau-Fläche (Glitzer oder einfarbig). */
+private fun fillBrush(c: Color, w: Float, h: Float, k: Float): Brush {
+    val gk = glitterKind(c)
+    return if (gk == 0) SolidColor(c) else ShaderBrush(glitterShader(gk, w, h, k))
 }
 
-private fun weightOf(i: Int) = if (i == 4) FontWeight.Bold else FontWeight.Normal
-private fun styleOf(i: Int) = if (i == 5) FontStyle.Italic else FontStyle.Normal
-private fun alignOf(i: Int) = when (i) {
-    0 -> TextAlign.Start
-    2 -> TextAlign.End
-    else -> TextAlign.Center
+/** Kleiner Verlauf für Farbfelder (Punkte und Icons) in den Einstellungen. */
+private fun swatchBrush(c: Color): Brush = when (glitterKind(c)) {
+    1 -> Brush.linearGradient(
+        listOf(Color(0xFFB8860B), Color(0xFFFFE27A), Color(0xFFD4AF37), Color(0xFFFFF3B0), Color(0xFFC9971C))
+    )
+    2 -> Brush.linearGradient(
+        listOf(Color(0xFF8E8E8E), Color(0xFFF5F5F5), Color(0xFFBDBDBD), Color(0xFFFFFFFF), Color(0xFFA0A0A0))
+    )
+    else -> SolidColor(c)
 }
 
 /** Nebelig ausblendende Ränder für horizontal scrollbare Zeilen. */
@@ -334,7 +342,10 @@ fun Stage(
     val free = state.mode == Mode.FREISTIL
     val sw = (cw * scale).roundToInt()
     val sh = (ch * scale).roundToInt()
-    val stageBg = if (free) Color.White else state.frameColor
+    val frameBrush = remember(state.frameColor, sw, sh, scale) {
+        fillBrush(state.frameColor, sw.toFloat(), sh.toFloat(), scale)
+    }
+    val stageBrush: Brush = if (free) SolidColor(Color.White) else frameBrush
 
     Box(Modifier.size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })) {
         // Das Feld (leer bleibt es ohne Hinweistext)
@@ -342,7 +353,7 @@ fun Stage(
             Modifier
                 .offset { IntOffset(ox, oy) }
                 .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
-                .background(stageBg)
+                .background(stageBrush)
         )
         state.images.forEachIndexed { i, img ->
             val r = rects.getOrNull(i)
@@ -384,8 +395,23 @@ fun Stage(
                                 .clip(shape)
                                 .then(
                                     if (free && borderPx >= 1f)
-                                        Modifier.border(with(density) { borderPx.toDp() }, state.frameColor, shape)
+                                        Modifier.border(with(density) { borderPx.toDp() }, frameBrush, shape)
                                     else Modifier
+                                )
+                                .then(
+                                    if (free) Modifier.drawWithContent {
+                                        drawContent()
+                                        // Alles außerhalb des weißen Feldes: 50 % graue Überlagerung
+                                        val l = -x0.toFloat()
+                                        val tp = -y0.toFloat()
+                                        clipRect(
+                                            left = l, top = tp,
+                                            right = l + sw, bottom = tp + sh,
+                                            clipOp = ClipOp.Difference
+                                        ) {
+                                            drawRect(DimColor)
+                                        }
+                                    } else Modifier
                                 )
                         )
                     }
@@ -394,10 +420,10 @@ fun Stage(
         }
         state.texts.forEach { t ->
             key(t) {
-                ItemFrame(
-                    x = ox + t.x * scale, y = oy + t.y * scale, w = t.w * scale, h = null,
+                TextItemView(
+                    t = t,
                     selected = state.selected === t,
-                    movable = true, resizable = true,
+                    ox = ox, oy = oy, scale = scale, sw = sw, sh = sh,
                     onSelect = { state.selected = t; state.gridOpen = false; state.frameOpen = false },
                     onMove = { dx, dy -> t.x += dx / scale; t.y += dy / scale },
                     onResize = { d ->
@@ -410,34 +436,62 @@ fun Stage(
                         state.texts.remove(t)
                         if (state.selected === t) state.selected = null
                     }
-                ) {
-                    val fsPx = t.fs * scale
-                    Text(
-                        text = if (t.text.isEmpty()) " " else t.text,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(t.bg ?: Color.Transparent)
-                            .padding(with(density) { (fsPx * 0.25f).toDp() }),
-                        style = TextStyle(
-                            color = t.color,
-                            fontSize = with(density) { fsPx.toSp() },
-                            fontFamily = familyOf(t.font),
-                            fontWeight = weightOf(t.font),
-                            fontStyle = styleOf(t.font),
-                            textAlign = alignOf(t.align),
-                            lineHeight = TextUnit.Unspecified,
-                            letterSpacing = TextUnit.Unspecified
-                        )
-                    )
-                }
+                )
             }
+        }
+    }
+}
+
+/* ---------- Eckkreise ---------- */
+
+@Composable
+fun DeleteHandle(modifier: Modifier, onDelete: () -> Unit) {
+    val cur by rememberUpdatedState(onDelete)
+    Box(
+        modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(Color(0xFFE53935))
+            .pointerInput(Unit) { detectTapGestures(onTap = { cur() }) },
+        contentAlignment = Alignment.Center
+    ) {
+        Text("×", color = Color.White, fontSize = 24.sp)
+    }
+}
+
+@Composable
+fun ResizeHandle(modifier: Modifier, onResize: (Float) -> Unit) {
+    val cur by rememberUpdatedState(onResize)
+    Box(
+        modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .border(1.dp, Color(0xFF999999), CircleShape)
+            .pointerInput(Unit) {
+                detectDragGestures { change, drag ->
+                    change.consume()
+                    cur((drag.x + drag.y) / 2f)
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(Modifier.size(18.dp)) {
+            val s = size.minDimension
+            val sw = 2.5.dp.toPx()
+            val c = Color.Black
+            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.85f, s * 0.85f), sw, StrokeCap.Round)
+            drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.45f, s * 0.85f), sw, StrokeCap.Round)
+            drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.85f, s * 0.45f), sw, StrokeCap.Round)
+            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.55f, s * 0.15f), sw, StrokeCap.Round)
+            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.15f, s * 0.55f), sw, StrokeCap.Round)
         }
     }
 }
 
 /**
  * x, y: Position der linken oberen Ecke des Inhalts im Container (Pixel).
- * w, h: Größe des Inhalts in Pixeln (h = null: Höhe folgt dem Inhalt).
+ * w, h: Größe des Inhalts in Pixeln.
  * Der Rahmen um den Inhalt (ITEM_PAD ringsum) bietet Platz für die Eckkreise.
  */
 @Composable
@@ -455,8 +509,6 @@ fun ItemFrame(
     val padDp = with(density) { padPx.toDp() }
     val curSelect by rememberUpdatedState(onSelect)
     val curMove by rememberUpdatedState(onMove)
-    val curResize by rememberUpdatedState(onResize)
-    val curDelete by rememberUpdatedState(onDelete)
     val totalW = max(0, w.roundToInt()) + 2 * padPx
     val totalH: Int? = h?.let { max(0, it.roundToInt()) + 2 * padPx }
 
@@ -497,45 +549,116 @@ fun ItemFrame(
         }
 
         if (selected) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE53935))
-                    .pointerInput(Unit) { detectTapGestures(onTap = { curDelete() }) },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("×", color = Color.White, fontSize = 24.sp)
-            }
+            DeleteHandle(Modifier.align(Alignment.TopStart), onDelete)
             if (resizable) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .border(1.dp, Color(0xFF999999), CircleShape)
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, drag ->
-                                change.consume()
-                                curResize((drag.x + drag.y) / 2f)
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(Modifier.size(18.dp)) {
-                        val s = size.minDimension
-                        val sw = 2.5.dp.toPx()
-                        val c = Color.Black
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.85f, s * 0.85f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.45f, s * 0.85f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.85f, s * 0.45f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.55f, s * 0.15f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.15f, s * 0.55f), sw, StrokeCap.Round)
-                    }
-                }
+                ResizeHandle(Modifier.align(Alignment.BottomEnd), onResize)
             }
+        }
+    }
+}
+
+/**
+ * Textfeld: wird mit derselben Routine gezeichnet wie im Export.
+ * Auswahlrahmen und Eckkreise folgen Rundung und Krümmung.
+ */
+@Composable
+fun TextItemView(
+    t: TxtItem, selected: Boolean,
+    ox: Int, oy: Int, scale: Float, sw: Int, sh: Int,
+    onSelect: () -> Unit,
+    onMove: (Float, Float) -> Unit,
+    onResize: (Float) -> Unit,
+    onDelete: () -> Unit
+) {
+    val density = LocalDensity.current
+    val padPx = with(density) { ITEM_PAD.roundToPx() }
+    val halfHandle = with(density) { 18.dp.toPx() }
+    val strokePx = with(density) { 2.dp.toPx() }
+    val curSelect by rememberUpdatedState(onSelect)
+    val curMove by rememberUpdatedState(onMove)
+    val dimPaint = remember {
+        android.graphics.Paint().apply {
+            color = 0x80C8C8C8.toInt()
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+        }
+    }
+
+    val g = textGeom(t)
+    val left = ox + ((t.x + g.bx0) * scale).roundToInt()
+    val top = oy + ((t.y + g.by0) * scale).roundToInt()
+    val bw = max(1, ((g.bx1 - g.bx0) * scale).roundToInt())
+    val bh = max(1, ((g.by1 - g.by0) * scale).roundToInt())
+
+    Box(
+        Modifier
+            .offset { IntOffset(left - padPx, top - padPx) }
+            .size(
+                with(density) { (bw + 2 * padPx).toDp() },
+                with(density) { (bh + 2 * padPx).toDp() }
+            )
+    ) {
+        Canvas(
+            Modifier
+                .offset { IntOffset(padPx, padPx) }
+                .size(with(density) { bw.toDp() }, with(density) { bh.toDp() })
+                .pointerInput(Unit) { detectTapGestures(onTap = { curSelect() }) }
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDragStart = { curSelect() },
+                        onDrag = { change, drag ->
+                            change.consume()
+                            curMove(drag.x, drag.y)
+                        }
+                    )
+                }
+        ) {
+            val nc = drawContext.canvas.nativeCanvas
+            val m = g.margin * scale
+            val layer = nc.saveLayer(-m, -m, bw + m, bh + m, null)
+
+            nc.save()
+            nc.scale(scale, scale)
+            nc.translate(-g.bx0, -g.by0)
+            drawTextItem(nc, t, g)
+            nc.restore()
+
+            // Außerhalb des weißen Feldes: 50 % graue Überlagerung (nur auf Text-Pixeln)
+            val fl = (ox - left).toFloat()
+            val ft = (oy - top).toFloat()
+            nc.save()
+            nc.clipOutRect(fl, ft, fl + sw, ft + sh)
+            nc.drawRect(-m, -m, bw + m, bh + m, dimPaint)
+            nc.restore()
+            nc.restoreToCount(layer)
+
+            if (selected) {
+                val sp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+                sp.style = android.graphics.Paint.Style.STROKE
+                sp.strokeWidth = strokePx / scale
+                sp.color = Teal.toArgb()
+                nc.save()
+                nc.scale(scale, scale)
+                nc.translate(-g.bx0, -g.by0)
+                val path = g.path
+                if (path == null) nc.drawRoundRect(0f, 0f, g.w, g.h, g.rad, g.rad, sp)
+                else nc.drawPath(path, sp)
+                nc.restore()
+            }
+        }
+
+        if (selected) {
+            val tlx = padPx + (g.tl.x - g.bx0) * scale
+            val tly = padPx + (g.tl.y - g.by0) * scale
+            val brx = padPx + (g.br.x - g.bx0) * scale
+            val bry = padPx + (g.br.y - g.by0) * scale
+            DeleteHandle(
+                Modifier.offset { IntOffset((tlx - halfHandle).roundToInt(), (tly - halfHandle).roundToInt()) },
+                onDelete
+            )
+            ResizeHandle(
+                Modifier.offset { IntOffset((brx - halfHandle).roundToInt(), (bry - halfHandle).roundToInt()) },
+                onResize
+            )
         }
     }
 }
@@ -557,19 +680,208 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
+    val gk = glitterKind(color)
     Box(
         Modifier
             .size(34.dp)
             .clip(CircleShape)
-            .background(color)
+            .background(swatchBrush(color))
             .border(
                 if (selected) 3.dp else 1.dp,
                 if (selected) Teal else Color(0xFF888888),
                 CircleShape
             )
             .clickable { onClick() }
+    ) {
+        if (gk != 0) {
+            Canvas(Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                val wh = Color.White.copy(alpha = 0.95f)
+                drawCircle(wh, 1.6.dp.toPx(), Offset(w * 0.28f, h * 0.32f))
+                drawCircle(wh, 1.1.dp.toPx(), Offset(w * 0.68f, h * 0.62f))
+                drawCircle(wh, 0.9.dp.toPx(), Offset(w * 0.45f, h * 0.78f))
+                val c = Offset(w * 0.70f, h * 0.26f)
+                val l = 3.5.dp.toPx()
+                drawLine(wh, Offset(c.x - l, c.y), Offset(c.x + l, c.y), 1.2.dp.toPx(), StrokeCap.Round)
+                drawLine(wh, Offset(c.x, c.y - l), Offset(c.x, c.y + l), 1.2.dp.toPx(), StrokeCap.Round)
+            }
+        }
+    }
+}
+
+/* ---------- Icons und Slider ---------- */
+
+@Composable
+private fun ThicknessIcon(percent: Int) {
+    Canvas(Modifier.size(28.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        val tw = (1.5f + percent / 100f * 6.5f).dp.toPx()
+        val y = size.height * 0.4f
+        val x = size.width / 2f
+        // Trennlinien (T) werden mit der Dicke breiter
+        drawRect(
+            c,
+            Offset(sw, max(sw, y - tw / 2f)),
+            Size(size.width - 2 * sw, tw)
+        )
+        drawRect(
+            c,
+            Offset(x - tw / 2f, y),
+            Size(tw, size.height - sw - y)
+        )
+        drawRoundRect(
+            c, Offset(sw / 2f, sw / 2f),
+            Size(size.width - sw, size.height - sw),
+            CornerRadius(3.dp.toPx()), Stroke(sw)
+        )
+    }
+}
+
+@Composable
+private fun RoundnessIcon(percent: Int) {
+    Canvas(Modifier.size(width = 28.dp, height = 22.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        val r = percent / 100f * (min(size.width, size.height) - sw) / 2f
+        drawRoundRect(
+            c, Offset(sw / 2f, sw / 2f),
+            Size(size.width - sw, size.height - sw),
+            CornerRadius(r), Stroke(sw)
+        )
+    }
+}
+
+@Composable
+private fun CornerIcon(percent: Int) {
+    Canvas(Modifier.size(28.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        val m = sw
+        val side = size.width - 2 * m
+        val r = percent / 100f * side
+        val path = Path()
+        path.moveTo(m, size.height - m)
+        path.lineTo(m, m + r)
+        if (r > 0.5f) path.arcTo(Rect(m, m, m + 2 * r, m + 2 * r), 180f, 90f, false)
+        path.lineTo(size.width - m, m)
+        drawPath(path, c, style = Stroke(sw, cap = StrokeCap.Round))
+    }
+}
+
+@Composable
+private fun ColorSquareIcon(color: Color) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(swatchBrush(color))
+            .border(1.5.dp, Color(0xFF444444), RoundedCornerShape(4.dp))
     )
 }
+
+@Composable
+private fun TransparencyIcon(percent: Int) {
+    Box(
+        Modifier
+            .size(26.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFF222222).copy(alpha = 1f - percent / 100f))
+    )
+}
+
+@Composable
+private fun DoubleArrowIcon(vertical: Boolean) {
+    Canvas(Modifier.size(28.dp)) {
+        val sw = 2.dp.toPx()
+        val c = Color(0xFF444444)
+        val a = 3.dp.toPx()
+        val hd = 5.dp.toPx()
+        if (vertical) {
+            val x = size.width / 2f
+            val e = size.height - a
+            drawLine(c, Offset(x, a), Offset(x, e), sw, StrokeCap.Round)
+            drawLine(c, Offset(x, a), Offset(x - hd, a + hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(x, a), Offset(x + hd, a + hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(x, e), Offset(x - hd, e - hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(x, e), Offset(x + hd, e - hd), sw, StrokeCap.Round)
+        } else {
+            val y = size.height / 2f
+            val e = size.width - a
+            drawLine(c, Offset(a, y), Offset(e, y), sw, StrokeCap.Round)
+            drawLine(c, Offset(a, y), Offset(a + hd, y - hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(a, y), Offset(a + hd, y + hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(e, y), Offset(e - hd, y - hd), sw, StrokeCap.Round)
+            drawLine(c, Offset(e, y), Offset(e - hd, y + hd), sw, StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
+private fun CurveIcon(percent: Int) {
+    Canvas(Modifier.size(width = 32.dp, height = 24.dp)) {
+        val wp = Warp(24f, 5f, percent)
+        val pts = outlinePoints(24f, 5f, 0f, 64).map { wp.map(it.x, it.y) }
+        var x0 = Float.MAX_VALUE
+        var y0 = Float.MAX_VALUE
+        var x1 = -Float.MAX_VALUE
+        var y1 = -Float.MAX_VALUE
+        for (p in pts) {
+            x0 = min(x0, p.x); x1 = max(x1, p.x)
+            y0 = min(y0, p.y); y1 = max(y1, p.y)
+        }
+        val sq = 0.75f   // zum Oval gestaucht
+        val bw = max(0.01f, x1 - x0)
+        val bh = max(0.01f, (y1 - y0) * sq)
+        val s = min(size.width / bw, size.height / bh) * 0.9f
+        val offX = (size.width - bw * s) / 2f
+        val offY = (size.height - bh * s) / 2f
+        val path = Path()
+        pts.forEachIndexed { i, p ->
+            val x = offX + (p.x - x0) * s
+            val y = offY + (p.y - y0) * sq * s
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+        drawPath(path, Color(0xFF444444))
+    }
+}
+
+@Composable
+private fun FrameSlider(
+    value: Int, onChange: (Int) -> Unit, modifier: Modifier,
+    lo: Int = 0, hi: Int = 100
+) {
+    Slider(
+        value = value.toFloat(),
+        onValueChange = { onChange(it.roundToInt()) },
+        valueRange = lo.toFloat()..hi.toFloat(),
+        steps = hi - lo - 1,
+        modifier = modifier,
+        colors = SliderDefaults.colors(
+            thumbColor = Teal,
+            activeTrackColor = Teal,
+            inactiveTrackColor = Color(0xFFCCCCCC),
+            activeTickColor = Color.Transparent,
+            inactiveTickColor = Color.Transparent
+        )
+    )
+}
+
+@Composable
+private fun SliderRow(
+    icon: @Composable () -> Unit,
+    value: Int, onChange: (Int) -> Unit,
+    lo: Int = 0, hi: Int = 100
+) {
+    Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { icon() }
+        FrameSlider(value, onChange, Modifier.weight(1f), lo, hi)
+    }
+}
+
+/* ---------- Text-Panel ---------- */
 
 @Composable
 fun TextPanel(t: TxtItem) {
@@ -616,6 +928,8 @@ fun TextPanel(t: TxtItem) {
             Chip("Kein", t.bg == null) { t.bg = null }
             PALETTE.forEach { c -> ColorDot(c, t.bg == c) { t.bg = c } }
         }
+        Text("Abgerundete Ecken", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ CornerIcon(t.corner) }, t.corner, { t.corner = it })
         Text("Ausrichtung", fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s4).horizontalScroll(s4),
@@ -625,69 +939,18 @@ fun TextPanel(t: TxtItem) {
             Chip("Mittig", t.align == 1) { t.align = 1 }
             Chip("Rechtsbündig", t.align == 2) { t.align = 2 }
         }
+        Text("Transparenz", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ TransparencyIcon(t.transp) }, t.transp, { t.transp = it })
+        Text("Zeilenabstand", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ DoubleArrowIcon(true) }, t.lineSp, { t.lineSp = it })
+        Text("Buchstabenabstand", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ DoubleArrowIcon(false) }, t.letterSp, { t.letterSp = it })
+        Text("Zeilenkrümmung", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ CurveIcon(t.curve) }, t.curve, { t.curve = it }, -100, 100)
     }
 }
 
 /* ---------- Rahmen-Panel ---------- */
-
-@Composable
-private fun ThicknessIcon() {
-    Canvas(Modifier.size(28.dp)) {
-        val sw = 2.dp.toPx()
-        val c = Color(0xFF444444)
-        drawRoundRect(
-            c, Offset(sw / 2f, sw / 2f),
-            Size(size.width - sw, size.height - sw),
-            CornerRadius(3.dp.toPx()), Stroke(sw)
-        )
-        val y = size.height * 0.4f
-        drawLine(c, Offset(0f, y), Offset(size.width, y), sw)
-        drawLine(c, Offset(size.width / 2f, y), Offset(size.width / 2f, size.height), sw)
-    }
-}
-
-@Composable
-private fun RoundnessIcon(percent: Int) {
-    Canvas(Modifier.size(width = 28.dp, height = 22.dp)) {
-        val sw = 2.dp.toPx()
-        val c = Color(0xFF444444)
-        val r = percent / 100f * (min(size.width, size.height) - sw) / 2f
-        drawRoundRect(
-            c, Offset(sw / 2f, sw / 2f),
-            Size(size.width - sw, size.height - sw),
-            CornerRadius(r), Stroke(sw)
-        )
-    }
-}
-
-@Composable
-private fun ColorSquareIcon(color: Color) {
-    Box(
-        Modifier
-            .size(26.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(color)
-            .border(1.5.dp, Color(0xFF444444), RoundedCornerShape(4.dp))
-    )
-}
-
-@Composable
-private fun FrameSlider(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
-    Slider(
-        value = value.toFloat(),
-        onValueChange = { onChange(it.roundToInt()) },
-        valueRange = 0f..100f,
-        steps = 99,
-        modifier = modifier,
-        colors = SliderDefaults.colors(
-            thumbColor = Teal,
-            activeTrackColor = Teal,
-            inactiveTrackColor = Color(0xFFCCCCCC),
-            activeTickColor = Color.Transparent,
-            inactiveTickColor = Color.Transparent
-        )
-    )
-}
 
 @Composable
 private fun FormatRow(state: EditorState) {
@@ -745,7 +1008,7 @@ fun FramePanel(state: EditorState) {
             FormatRow(state)
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon() }
+            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon(state.gap) }
             FrameSlider(state.gap, { state.gap = it }, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
