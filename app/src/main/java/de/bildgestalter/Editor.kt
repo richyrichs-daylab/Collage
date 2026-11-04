@@ -6,6 +6,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -40,38 +41,51 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 private val Teal = Color(0xFF3AA8C1)
+private val Grau = Color(0xFFA8A8A8)
 
 // Zusätzlicher Rand um jedes Element für die Eckkreise (x und Pfeil)
 private val ITEM_PAD = 22.dp
@@ -98,12 +112,50 @@ private fun alignOf(i: Int) = when (i) {
     else -> TextAlign.Center
 }
 
+/** Nebelig ausblendende Ränder für horizontal scrollbare Zeilen. */
+private fun Modifier.fadingEdges(scroll: ScrollState, fade: Dp = 28.dp): Modifier =
+    this
+        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+        .drawWithContent {
+            drawContent()
+            val f = fade.toPx()
+            val left = min(scroll.value.toFloat(), f)
+            val right = min((scroll.maxValue - scroll.value).toFloat(), f)
+            if (left > 0.5f) {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(Color.Black.copy(alpha = 1f - left / f), Color.Black),
+                        startX = 0f,
+                        endX = f
+                    ),
+                    topLeft = Offset.Zero,
+                    size = Size(f, size.height),
+                    blendMode = BlendMode.DstIn
+                )
+            }
+            if (right > 0.5f) {
+                drawRect(
+                    brush = Brush.horizontalGradient(
+                        colors = listOf(Color.Black, Color.Black.copy(alpha = 1f - right / f)),
+                        startX = size.width - f,
+                        endX = size.width
+                    ),
+                    topLeft = Offset(size.width - f, 0f),
+                    size = Size(f, size.height),
+                    blendMode = BlendMode.DstIn
+                )
+            }
+        }
+
 @Composable
 fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val padPx = with(density) { ITEM_PAD.roundToPx() }
     val scope = rememberCoroutineScope()
+    var showRes by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
+
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
@@ -120,7 +172,8 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
 
     val addText: () -> Unit = {
         val (cw, ch) = canvasSize(state)
-        var x = (cw - 540f) / 2f
+        val tw = min(540f, cw * 0.8f)
+        var x = (cw - tw) / 2f
         var y = ch * 0.4f
         if (state.mode == Mode.REIHE) {
             val sc = scaleRef[0]
@@ -130,19 +183,24 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 x = hScroll.value / sc + 120f
             }
         }
-        state.addText(x, y)
+        state.addText(x, y, tw)
     }
 
     val export: () -> Unit = {
-        if (state.images.isEmpty() && state.texts.isEmpty()) {
-            Toast.makeText(context, "Bitte zuerst Bilder oder Text hinzufügen.", Toast.LENGTH_SHORT).show()
-        } else {
-            state.selected = null
-            scope.launch {
-                val r = exportImage(context, state)
-                val msg = if (r != null) "Gespeichert als $r in der Galerie (Ordner Bildgestalter)"
-                else "Export fehlgeschlagen"
-                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        if (!exporting) {
+            if (state.images.isEmpty() && state.texts.isEmpty()) {
+                Toast.makeText(context, "Bitte zuerst Bilder oder Text hinzufügen.", Toast.LENGTH_SHORT).show()
+            } else {
+                exporting = true
+                state.selected = null
+                Toast.makeText(context, "Wird exportiert …", Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    val r = exportImage(context, state)
+                    exporting = false
+                    val msg = if (r != null) "Gespeichert als $r in der Galerie (Ordner Bildgestalter)"
+                    else "Export fehlgeschlagen. Versuche eine niedrigere Bildauflösung."
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
             }
         }
     }
@@ -174,20 +232,29 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 "←", fontSize = 30.sp, color = Color.Black,
                 modifier = Modifier.clickable { onBack() }.padding(horizontal = 12.dp, vertical = 4.dp)
             )
-            Text(
-                "Exportieren", fontSize = 18.sp, color = Color.Black,
-                modifier = Modifier.clickable { export() }.padding(horizontal = 12.dp, vertical = 8.dp)
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Bildauflösung", fontSize = 15.sp, color = Color.Black,
+                    modifier = Modifier.clickable { showRes = true }.padding(horizontal = 8.dp, vertical = 8.dp)
+                )
+                Text(
+                    "Exportieren", fontSize = 15.sp, color = Color.Black,
+                    modifier = Modifier.clickable { export() }.padding(horizontal = 8.dp, vertical = 8.dp)
+                )
+            }
         }
 
         BoxWithConstraints(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .clipToBounds()
                 .background(Color(0xFFC8C8C8))
         ) {
-            val aw = constraints.maxWidth.toFloat()
-            val ah = constraints.maxHeight.toFloat()
+            val awI = constraints.maxWidth
+            val ahI = constraints.maxHeight
+            val aw = awI.toFloat()
+            val ah = ahI.toFloat()
             val (cw, ch) = canvasSize(state)
             val p2 = 2f * padPx + 4f
             val scale = when {
@@ -196,6 +263,8 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 else -> min(ah * 0.84f, ah - p2) / ch
             }
             scaleRef[0] = scale
+            val sw = (cw * scale).roundToInt()
+            val sh = (ch * scale).roundToInt()
 
             Box(
                 Modifier
@@ -209,14 +278,14 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 if (state.mode != Mode.REIHE) {
-                    Stage(state, cw, ch, scale)
+                    Stage(state, cw, ch, scale, (awI - sw) / 2, (ahI - sh) / 2, awI, ahI)
                 } else if (state.vertical) {
                     Column(
                         Modifier.fillMaxWidth().verticalScroll(vScroll),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Spacer(Modifier.height(16.dp))
-                        Stage(state, cw, ch, scale)
+                        Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
                         Spacer(Modifier.height(16.dp))
                     }
                 } else {
@@ -225,7 +294,7 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Spacer(Modifier.width(16.dp))
-                        Stage(state, cw, ch, scale)
+                        Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
                         Spacer(Modifier.width(16.dp))
                     }
                 }
@@ -238,30 +307,40 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
         if (state.frameOpen) FramePanel(state)
         BottomBar(state, pick, addText, toggleFrame)
     }
+
+    if (showRes) {
+        ResolutionDialog(
+            current = state.quality,
+            onSelect = { i ->
+                state.quality = i
+                saveQuality(context, state.mode, i)
+            },
+            onDismiss = { showRes = false }
+        )
+    }
 }
 
+/**
+ * ox, oy: Position des weißen Feldes im Container (in Pixeln).
+ * boxW, boxH: Größe des Containers (in Pixeln).
+ */
 @Composable
-fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
+fun Stage(
+    state: EditorState, cw: Float, ch: Float, scale: Float,
+    ox: Int, oy: Int, boxW: Int, boxH: Int
+) {
     val density = LocalDensity.current
-    val padPx = with(density) { ITEM_PAD.roundToPx() }
     val rects = rectsOf(state)
     val free = state.mode == Mode.FREISTIL
     val sw = (cw * scale).roundToInt()
     val sh = (ch * scale).roundToInt()
     val stageBg = if (free) Color.White else state.frameColor
 
-    // Behälter: etwas größer als die Fläche, damit die Eckkreise am Rand
-    // Platz haben und die Bilder nicht gestaucht werden.
-    Box(
-        Modifier.size(
-            with(density) { (sw + 2 * padPx).toDp() },
-            with(density) { (sh + 2 * padPx).toDp() }
-        )
-    ) {
-        // Leere Fläche: bewusst ohne Hinweistext
+    Box(Modifier.size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })) {
+        // Das Feld (leer bleibt es ohne Hinweistext)
         Box(
             Modifier
-                .offset { IntOffset(padPx, padPx) }
+                .offset { IntOffset(ox, oy) }
                 .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
                 .background(stageBg)
         )
@@ -279,7 +358,7 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
                     val shape = RoundedCornerShape(with(density) { radPx.toDp() })
                     val borderPx = state.gap * 0.6f * scale
                     ItemFrame(
-                        x = x0.toFloat(), y = y0.toFloat(),
+                        x = (ox + x0).toFloat(), y = (oy + y0).toFloat(),
                         w = (x1 - x0).toFloat(), h = (y1 - y0).toFloat(),
                         selected = state.selected === img,
                         movable = free, resizable = free,
@@ -316,7 +395,7 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
         state.texts.forEach { t ->
             key(t) {
                 ItemFrame(
-                    x = t.x * scale, y = t.y * scale, w = t.w * scale, h = null,
+                    x = ox + t.x * scale, y = oy + t.y * scale, w = t.w * scale, h = null,
                     selected = state.selected === t,
                     movable = true, resizable = true,
                     onSelect = { state.selected = t; state.gridOpen = false; state.frameOpen = false },
@@ -339,12 +418,16 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
                             .fillMaxWidth()
                             .background(t.bg ?: Color.Transparent)
                             .padding(with(density) { (fsPx * 0.25f).toDp() }),
-                        color = t.color,
-                        fontSize = with(density) { fsPx.toSp() },
-                        fontFamily = familyOf(t.font),
-                        fontWeight = weightOf(t.font),
-                        fontStyle = styleOf(t.font),
-                        textAlign = alignOf(t.align)
+                        style = TextStyle(
+                            color = t.color,
+                            fontSize = with(density) { fsPx.toSp() },
+                            fontFamily = familyOf(t.font),
+                            fontWeight = weightOf(t.font),
+                            fontStyle = styleOf(t.font),
+                            textAlign = alignOf(t.align),
+                            lineHeight = TextUnit.Unspecified,
+                            letterSpacing = TextUnit.Unspecified
+                        )
                     )
                 }
             }
@@ -353,10 +436,9 @@ fun Stage(state: EditorState, cw: Float, ch: Float, scale: Float) {
 }
 
 /**
- * x, y, w, h: Position und Größe des Inhalts in Pixeln, bezogen auf die Fläche.
- * Der Behälter (Stage) beginnt ITEM_PAD links/oben vor der Fläche. Der Rahmen
- * dieses Elements (Inhalt + ITEM_PAD ringsum) liegt deshalb bei (x, y).
- * Die Größe wird fest vorgegeben und nie vom Elternteil gestaucht.
+ * x, y: Position der linken oberen Ecke des Inhalts im Container (Pixel).
+ * w, h: Größe des Inhalts in Pixeln (h = null: Höhe folgt dem Inhalt).
+ * Der Rahmen um den Inhalt (ITEM_PAD ringsum) bietet Platz für die Eckkreise.
  */
 @Composable
 fun ItemFrame(
@@ -380,7 +462,7 @@ fun ItemFrame(
 
     Box(
         Modifier
-            .offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            .offset { IntOffset(x.roundToInt() - padPx, y.roundToInt() - padPx) }
             .layout { measurable, _ ->
                 val c = if (totalH != null) {
                     Constraints.fixed(totalW, totalH)
@@ -410,364 +492,3 @@ fun ItemFrame(
                     }
                 }
                 .then(if (selected) Modifier.border(2.dp, Teal) else Modifier)
-        ) {
-            content()
-        }
-
-        if (selected) {
-            Box(
-                Modifier
-                    .align(Alignment.TopStart)
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFFE53935))
-                    .pointerInput(Unit) { detectTapGestures(onTap = { curDelete() }) },
-                contentAlignment = Alignment.Center
-            ) {
-                Text("×", color = Color.White, fontSize = 24.sp)
-            }
-            if (resizable) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(Color.White)
-                        .border(1.dp, Color(0xFF999999), CircleShape)
-                        .pointerInput(Unit) {
-                            detectDragGestures { change, drag ->
-                                change.consume()
-                                curResize((drag.x + drag.y) / 2f)
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Canvas(Modifier.size(18.dp)) {
-                        val s = size.minDimension
-                        val sw = 2.5.dp.toPx()
-                        val c = Color.Black
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.85f, s * 0.85f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.45f, s * 0.85f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.85f, s * 0.45f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.55f, s * 0.15f), sw, StrokeCap.Round)
-                        drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.15f, s * 0.55f), sw, StrokeCap.Round)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(10.dp)
-    Box(
-        Modifier
-            .clip(shape)
-            .background(if (selected) Color(0xFFB5ECF2) else Color.White)
-            .border(1.dp, if (selected) Teal else Color(0xFFAAAAAA), shape)
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 8.dp)
-    ) {
-        Text(text, fontSize = 14.sp, color = Color.Black)
-    }
-}
-
-@Composable
-fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(34.dp)
-            .clip(CircleShape)
-            .background(color)
-            .border(
-                if (selected) 3.dp else 1.dp,
-                if (selected) Teal else Color(0xFF888888),
-                CircleShape
-            )
-            .clickable { onClick() }
-    )
-}
-
-@Composable
-fun TextPanel(t: TxtItem) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFF4F4F4))
-            .heightIn(max = 220.dp)
-            .verticalScroll(rememberScrollState())
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        OutlinedTextField(
-            value = t.text,
-            onValueChange = { t.text = it },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Text") },
-            maxLines = 3
-        )
-        Text("Schriftart", fontSize = 12.sp, color = Color.Black)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FONT_NAMES.forEachIndexed { i, n -> Chip(n, t.font == i) { t.font = i } }
-        }
-        Text("Schriftfarbe", fontSize = 12.sp, color = Color.Black)
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            PALETTE.forEach { c -> ColorDot(c, t.color == c) { t.color = c } }
-        }
-        Text("Textfeld-Hintergrund", fontSize = 12.sp, color = Color.Black)
-        Row(
-            Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Chip("Kein", t.bg == null) { t.bg = null }
-            PALETTE.forEach { c -> ColorDot(c, t.bg == c) { t.bg = c } }
-        }
-        Text("Ausrichtung", fontSize = 12.sp, color = Color.Black)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Chip("Linksbündig", t.align == 0) { t.align = 0 }
-            Chip("Mittig", t.align == 1) { t.align = 1 }
-            Chip("Rechtsbündig", t.align == 2) { t.align = 2 }
-        }
-    }
-}
-
-/* ---------- Rahmen-Panel ---------- */
-
-@Composable
-private fun ThicknessIcon() {
-    Canvas(Modifier.size(28.dp)) {
-        val sw = 2.dp.toPx()
-        val c = Color(0xFF444444)
-        drawRoundRect(
-            c, Offset(sw / 2f, sw / 2f),
-            Size(size.width - sw, size.height - sw),
-            CornerRadius(3.dp.toPx()), Stroke(sw)
-        )
-        val y = size.height * 0.4f
-        drawLine(c, Offset(0f, y), Offset(size.width, y), sw)
-        drawLine(c, Offset(size.width / 2f, y), Offset(size.width / 2f, size.height), sw)
-    }
-}
-
-@Composable
-private fun RoundnessIcon(percent: Int) {
-    Canvas(Modifier.size(width = 28.dp, height = 22.dp)) {
-        val sw = 2.dp.toPx()
-        val c = Color(0xFF444444)
-        val r = percent / 100f * (min(size.width, size.height) - sw) / 2f
-        drawRoundRect(
-            c, Offset(sw / 2f, sw / 2f),
-            Size(size.width - sw, size.height - sw),
-            CornerRadius(r), Stroke(sw)
-        )
-    }
-}
-
-@Composable
-private fun ColorSquareIcon(color: Color) {
-    Box(
-        Modifier
-            .size(26.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(color)
-            .border(1.5.dp, Color(0xFF444444), RoundedCornerShape(4.dp))
-    )
-}
-
-@Composable
-private fun FrameSlider(value: Int, onChange: (Int) -> Unit, modifier: Modifier) {
-    Slider(
-        value = value.toFloat(),
-        onValueChange = { onChange(it.roundToInt()) },
-        valueRange = 0f..100f,
-        steps = 99,
-        modifier = modifier,
-        colors = SliderDefaults.colors(
-            thumbColor = Teal,
-            activeTrackColor = Teal,
-            inactiveTrackColor = Color(0xFFCCCCCC),
-            activeTickColor = Color.Transparent,
-            inactiveTickColor = Color.Transparent
-        )
-    )
-}
-
-@Composable
-fun FramePanel(state: EditorState) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFF4F4F4))
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-    ) {
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon() }
-            FrameSlider(state.gap, { state.gap = it }, Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { RoundnessIcon(state.rundung) }
-            FrameSlider(state.rundung, { state.rundung = it }, Modifier.weight(1f))
-        }
-        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ColorSquareIcon(state.frameColor) }
-            Row(
-                Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                PALETTE.forEach { c -> ColorDot(c, state.frameColor == c) { state.frameColor = c } }
-            }
-        }
-    }
-}
-
-@Composable
-fun GridPicker(state: EditorState) {
-    val opts = collageOptions(state.images.size)
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(Color.White)
-            .horizontalScroll(rememberScrollState())
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        if (opts.isEmpty()) {
-            Text("Füge zuerst Bilder hinzu.", color = Color.Black)
-        }
-        opts.forEachIndexed { i, o ->
-            val isSel = i == state.collageIdx.coerceIn(0, opts.size - 1)
-            val cells = collageCells(o, 100f, 4f)
-            Canvas(
-                Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFCCCCCC))
-                    .then(
-                        if (isSel) Modifier.border(3.dp, Teal, RoundedCornerShape(6.dp)) else Modifier
-                    )
-                    .clickable {
-                        state.collageIdx = i
-                        state.gridOpen = false
-                    }
-            ) {
-                val k = size.width / 100f
-                for (c in cells) {
-                    drawRect(
-                        Color(0xFF7CC6D4),
-                        topLeft = Offset(c.x * k, c.y * k),
-                        size = Size(c.w * k, c.h * k)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(22.dp)
-    Box(
-        modifier
-            .height(64.dp)
-            .clip(shape)
-            .background(Color.White.copy(alpha = 0.55f))
-            .border(4.dp, Color.White, shape)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            fontSize = size.sp,
-            color = Color.Black,
-            fontFamily = RussoFamily,
-            maxLines = 1,
-            softWrap = false
-        )
-    }
-}
-
-@Composable
-fun Pip(on: Boolean) {
-    Box(
-        Modifier
-            .size(8.dp)
-            .clip(CircleShape)
-            .background(if (on) Teal else Color(0xFFDDDDDD))
-    )
-}
-
-@Composable
-fun FormatButton(state: EditorState, modifier: Modifier) {
-    val shape = RoundedCornerShape(22.dp)
-    val v = state.vertical
-    Box(
-        modifier
-            .height(64.dp)
-            .clip(shape)
-            .background(Color.White.copy(alpha = 0.55f))
-            .border(4.dp, Color.White, shape)
-            .clickable {
-                state.vertical = !state.vertical
-                val (w, h) = canvasSize(state)
-                state.texts.forEach { t ->
-                    t.x = t.x.coerceIn(0f, max(0f, w - t.w))
-                    t.y = t.y.coerceIn(0f, max(0f, h - 100f))
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Box(
-                Modifier
-                    .size(if (v) 18.dp else 28.dp, if (v) 28.dp else 18.dp)
-                    .background(Color(0xFFBBBBBB))
-                    .border(2.dp, Color.White)
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Pip(v)
-                Pip(!v)
-            }
-        }
-    }
-}
-
-@Composable
-fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(Color(0xFFE6E6E6))
-            .navigationBarsPadding()
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        when (state.mode) {
-            Mode.FREISTIL -> {
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("Text", 22, Modifier.weight(1f), onText)
-            }
-            Mode.REIHE -> {
-                FormatButton(state, Modifier.weight(1f))
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Text", 20, Modifier.weight(1f), onText)
-            }
-            Mode.COLLAGE -> {
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("Raster", 16, Modifier.weight(1f)) {
-                    state.gridOpen = !state.gridOpen
-                    if (state.gridOpen) state.frameOpen = false
-                }
-                BarButton("Text", 20, Modifier.weight(1f), onText)
-            }
-        }
-    }
-}
