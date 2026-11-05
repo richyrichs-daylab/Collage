@@ -1,18 +1,24 @@
 package de.bildgestalter
 
-import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,7 +33,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -41,8 +46,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -59,41 +65,38 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.ClipOp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.PointerInputScope
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 private val Teal = Color(0xFF3AA8C1)
 private val Grau = Color(0xFFA8A8A8)
-private val DimColor = Color(0xFFC8C8C8).copy(alpha = 0.5f)
 
-// Zusätzlicher Rand um jedes Element für die Eckkreise (x und Pfeil)
+// Zusätzlicher Rand um die Reihe-Fläche, damit die Eckkreise Platz haben
 private val ITEM_PAD = 22.dp
 
 private val PALETTE = listOf(
@@ -103,19 +106,13 @@ private val PALETTE = listOf(
     GOLD, SILVER
 )
 
-/** Brush für eine Vorschau-Fläche (Glitzer oder einfarbig). */
-private fun fillBrush(c: Color, w: Float, h: Float, k: Float): Brush {
-    val gk = glitterKind(c)
-    return if (gk == 0) SolidColor(c) else ShaderBrush(glitterShader(gk, w, h, k))
-}
-
 /** Kleiner Verlauf für Farbfelder (Punkte und Icons) in den Einstellungen. */
 private fun swatchBrush(c: Color): Brush = when (glitterKind(c)) {
     1 -> Brush.linearGradient(
-        listOf(Color(0xFFB8860B), Color(0xFFFFE27A), Color(0xFFD4AF37), Color(0xFFFFF3B0), Color(0xFFC9971C))
+        listOf(Color(0xFFB8842A), Color(0xFFD6AB3B), Color(0xFFEBD36B), Color(0xFFD3AA36))
     )
-    2 -> Brush.linearGradient(
-        listOf(Color(0xFF8E8E8E), Color(0xFFF5F5F5), Color(0xFFBDBDBD), Color(0xFFFFFFFF), Color(0xFFA0A0A0))
+    2 -> Brush.verticalGradient(
+        listOf(Color(0xFFB2B2B2), Color(0xFFF2F2F2), Color(0xFFD4D4D4), Color(0xFFBCBCBC))
     )
     else -> SolidColor(c)
 }
@@ -162,7 +159,15 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     val padPx = with(density) { ITEM_PAD.roundToPx() }
     val scope = rememberCoroutineScope()
     var showRes by remember { mutableStateOf(false) }
-    var exporting by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(msg) {
+        if (msg != null) {
+            delay(3500)
+            msg = null
+        }
+    }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia()
@@ -179,10 +184,11 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     val scaleRef = remember { floatArrayOf(1f) }
 
     val addText: () -> Unit = {
+        val t = TxtItem()
+        val g = textGeom(t)
         val (cw, ch) = canvasSize(state)
-        val tw = min(540f, cw * 0.8f)
-        var x = (cw - tw) / 2f
-        var y = ch * 0.4f
+        var x = (cw - g.w) / 2f
+        var y = (ch - g.h) / 2f
         if (state.mode == Mode.REIHE) {
             val sc = scaleRef[0]
             if (state.vertical) {
@@ -191,23 +197,25 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 x = hScroll.value / sc + 120f
             }
         }
-        state.addText(x, y, tw)
+        t.x = x
+        t.y = y
+        state.texts.add(t)
+        state.select(t)
     }
 
     val export: () -> Unit = {
-        if (!exporting) {
+        if (!busy) {
             if (state.images.isEmpty() && state.texts.isEmpty()) {
                 Toast.makeText(context, "Bitte zuerst Bilder oder Text hinzufügen.", Toast.LENGTH_SHORT).show()
             } else {
-                exporting = true
+                busy = true
+                msg = null
                 state.selected = null
-                Toast.makeText(context, "Wird exportiert …", Toast.LENGTH_SHORT).show()
                 scope.launch {
                     val r = exportImage(context, state)
-                    exporting = false
-                    val msg = if (r != null) "Gespeichert als $r in der Galerie (Ordner Bildgestalter)"
+                    busy = false
+                    msg = if (r != null) "Gespeichert als $r in der Galerie (Ordner Bildgestalter)"
                     else "Export fehlgeschlagen. Versuche eine niedrigere Bildauflösung."
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 }
             }
         }
@@ -215,105 +223,115 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
 
     val toggleFrame: () -> Unit = {
         state.frameOpen = !state.frameOpen
-        if (state.frameOpen) {
-            state.gridOpen = false
-            state.selected = null
-        }
+        if (state.frameOpen) state.selected = null
     }
 
-    Column(
+    Box(
         Modifier
             .fillMaxSize()
             .background(Color(0xFFE6E6E6))
-            .statusBarsPadding()
     ) {
-        Row(
+        Column(
             Modifier
-                .fillMaxWidth()
-                .background(Color.White)
-                .height(56.dp)
-                .padding(horizontal = 8.dp),
-            Arrangement.SpaceBetween,
-            Alignment.CenterVertically
+                .fillMaxSize()
+                .statusBarsPadding()
         ) {
-            Text(
-                "←", fontSize = 30.sp, color = Color.Black,
-                modifier = Modifier.clickable { onBack() }.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Bildauflösung", fontSize = 15.sp, color = Color.Black,
-                    modifier = Modifier.clickable { showRes = true }.padding(horizontal = 8.dp, vertical = 8.dp)
-                )
-                Text(
-                    "Exportieren", fontSize = 15.sp, color = Color.Black,
-                    modifier = Modifier.clickable { export() }.padding(horizontal = 8.dp, vertical = 8.dp)
-                )
-            }
-        }
-
-        BoxWithConstraints(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .clipToBounds()
-                .background(Color(0xFFC8C8C8))
-        ) {
-            val awI = constraints.maxWidth
-            val ahI = constraints.maxHeight
-            val aw = awI.toFloat()
-            val ah = ahI.toFloat()
-            val (cw, ch) = canvasSize(state)
-            val p2 = 2f * padPx + 4f
-            val scale = when {
-                state.mode != Mode.REIHE -> min((aw - p2) / cw, (ah - p2) / ch)
-                state.vertical -> min(aw * 0.84f, aw - p2) / cw
-                else -> min(ah * 0.84f, ah - p2) / ch
-            }
-            scaleRef[0] = scale
-            val sw = (cw * scale).roundToInt()
-            val sh = (ch * scale).roundToInt()
-
-            Box(
+            Row(
                 Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures(onTap = {
-                            state.selected = null
-                            state.gridOpen = false
-                        })
-                    },
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .height(56.dp)
+                    .padding(horizontal = 8.dp),
+                Arrangement.SpaceBetween,
+                Alignment.CenterVertically
             ) {
-                if (state.mode != Mode.REIHE) {
-                    Stage(state, cw, ch, scale, (awI - sw) / 2, (ahI - sh) / 2, awI, ahI)
-                } else if (state.vertical) {
-                    Column(
-                        Modifier.fillMaxWidth().verticalScroll(vScroll),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Spacer(Modifier.height(16.dp))
-                        Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
-                        Spacer(Modifier.height(16.dp))
-                    }
-                } else {
-                    Row(
-                        Modifier.fillMaxHeight().horizontalScroll(hScroll),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Spacer(Modifier.width(16.dp))
-                        Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
-                        Spacer(Modifier.width(16.dp))
+                Text(
+                    "←", fontSize = 30.sp, color = Color.Black,
+                    modifier = Modifier.clickable { onBack() }.padding(horizontal = 12.dp, vertical = 4.dp)
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Bildauflösung", fontSize = 15.sp, color = Color.Black,
+                        modifier = Modifier.clickable { showRes = true }.padding(horizontal = 8.dp, vertical = 8.dp)
+                    )
+                    Text(
+                        "Exportieren", fontSize = 15.sp, color = Color.Black,
+                        modifier = Modifier.clickable { export() }.padding(horizontal = 8.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
+            BoxWithConstraints(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .clipToBounds()
+                    .background(Color(0xFFC8C8C8))
+            ) {
+                val awI = constraints.maxWidth
+                val ahI = constraints.maxHeight
+                val aw = awI.toFloat()
+                val ah = ahI.toFloat()
+                val (cw, ch) = canvasSize(state)
+                val p2 = 2f * padPx + 4f
+                val scale = when {
+                    state.mode != Mode.REIHE -> min((aw - p2) / cw, (ah - p2) / ch)
+                    state.vertical -> min(aw * 0.84f, aw - p2) / cw
+                    else -> min(ah * 0.84f, ah - p2) / ch
+                }
+                scaleRef[0] = scale
+                val sw = (cw * scale).roundToInt()
+                val sh = (ch * scale).roundToInt()
+
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(onTap = { state.selected = null })
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (state.mode != Mode.REIHE) {
+                        Stage(state, cw, ch, scale, (awI - sw) / 2, (ahI - sh) / 2, awI, ahI)
+                    } else if (state.vertical) {
+                        Column(
+                            Modifier.fillMaxWidth().verticalScroll(vScroll),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Spacer(Modifier.height(16.dp))
+                            Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
+                            Spacer(Modifier.height(16.dp))
+                        }
+                    } else {
+                        Row(
+                            Modifier.fillMaxHeight().horizontalScroll(hScroll),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Spacer(Modifier.width(16.dp))
+                            Stage(state, cw, ch, scale, padPx, padPx, sw + 2 * padPx, sh + 2 * padPx)
+                            Spacer(Modifier.width(16.dp))
+                        }
                     }
                 }
             }
+
+            val sel = state.selected
+            if (sel is TxtItem) TextPanel(sel)
+            if (state.frameOpen) FramePanel(state)
+            BottomBar(pick, addText, toggleFrame)
         }
 
-        val sel = state.selected
-        if (sel is TxtItem) TextPanel(sel)
-        if (state.gridOpen && state.mode == Mode.COLLAGE) GridPicker(state)
-        if (state.frameOpen) FramePanel(state)
-        BottomBar(state, pick, addText, toggleFrame)
+        val m = msg
+        if (busy || m != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 100.dp)
+            ) {
+                MessagePill(busy, m)
+            }
+        }
     }
 
     if (showRes) {
@@ -328,9 +346,64 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     }
 }
 
+/* ---------- Meldung mit blinkenden Punkten ---------- */
+
+@Composable
+private fun BlinkingDots() {
+    val tr = rememberInfiniteTransition(label = "dots")
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        for (i in 0..2) {
+            val a by tr.animateFloat(
+                initialValue = 0.05f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(650, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(i * 220)
+                ),
+                label = "dot$i"
+            )
+            Box(
+                Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = a))
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessagePill(busy: Boolean, msg: String?) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(22.dp))
+            .background(Color(0xE6303030))
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (busy) {
+            Text("Wird exportiert", color = Color.White, fontSize = 15.sp)
+            Spacer(Modifier.width(8.dp))
+            BlinkingDots()
+        } else if (msg != null) {
+            Text(msg, color = Color.White, fontSize = 15.sp)
+        }
+    }
+}
+
+/* ---------- Fläche (Vorschau, Ausgrauen, Griffe, Gesten) ---------- */
+
+private class ViewInfo(val scale: Float, val ox: Float, val oy: Float)
+
 /**
  * ox, oy: Position des weißen Feldes im Container (in Pixeln).
  * boxW, boxH: Größe des Containers (in Pixeln).
+ * Alles wird in einem Zug gezeichnet: erst die Szene (wie im Export), dann die
+ * graue Schicht außerhalb des Feldes, dann Auswahlrahmen und Eckkreise.
  */
 @Composable
 fun Stage(
@@ -338,330 +411,309 @@ fun Stage(
     ox: Int, oy: Int, boxW: Int, boxH: Int
 ) {
     val density = LocalDensity.current
-    val rects = rectsOf(state)
-    val free = state.mode == Mode.FREISTIL
-    val sw = (cw * scale).roundToInt()
-    val sh = (ch * scale).roundToInt()
-    val frameBrush = remember(state.frameColor, sw, sh, scale) {
-        fillBrush(state.frameColor, sw.toFloat(), sh.toFloat(), scale)
-    }
-    val stageBrush: Brush = if (free) SolidColor(Color.White) else frameBrush
-
-    Box(Modifier.size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })) {
-        // Das Feld (leer bleibt es ohne Hinweistext)
-        Box(
-            Modifier
-                .offset { IntOffset(ox, oy) }
-                .size(with(density) { sw.toDp() }, with(density) { sh.toDp() })
-                .background(stageBrush)
-        )
-        state.images.forEachIndexed { i, img ->
-            val r = rects.getOrNull(i)
-            if (r != null) {
-                key(img) {
-                    val bitmap = remember(img) { img.bmp.asImageBitmap() }
-                    // Pixelgenaue Kanten: keine Lücken durch Rundung
-                    val x0 = (r.x * scale).roundToInt()
-                    val y0 = (r.y * scale).roundToInt()
-                    val x1 = ((r.x + r.w) * scale).roundToInt()
-                    val y1 = ((r.y + r.h) * scale).roundToInt()
-                    val radPx = state.rundung / 100f * min(r.w, r.h) / 2f * scale
-                    val shape = RoundedCornerShape(with(density) { radPx.toDp() })
-                    val borderPx = state.gap * 0.6f * scale
-                    ItemFrame(
-                        x = (ox + x0).toFloat(), y = (oy + y0).toFloat(),
-                        w = (x1 - x0).toFloat(), h = (y1 - y0).toFloat(),
-                        selected = state.selected === img,
-                        movable = free, resizable = free,
-                        onSelect = { state.selected = img; state.gridOpen = false },
-                        onMove = { dx, dy -> img.x += dx / scale; img.y += dy / scale },
-                        onResize = { d ->
-                            val nw = max(60f, img.w + d / scale)
-                            val k = nw / img.w
-                            img.w = nw
-                            img.h = img.h * k
-                        },
-                        onDelete = {
-                            state.images.remove(img)
-                            if (state.selected === img) state.selected = null
-                        }
-                    ) {
-                        Image(
-                            bitmap = bitmap,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clip(shape)
-                                .then(
-                                    if (free && borderPx >= 1f)
-                                        Modifier.border(with(density) { borderPx.toDp() }, frameBrush, shape)
-                                    else Modifier
-                                )
-                                .then(
-                                    if (free) Modifier.drawWithContent {
-                                        drawContent()
-                                        // Alles außerhalb des weißen Feldes: 50 % graue Überlagerung
-                                        val l = -x0.toFloat()
-                                        val tp = -y0.toFloat()
-                                        clipRect(
-                                            left = l, top = tp,
-                                            right = l + sw, bottom = tp + sh,
-                                            clipOp = ClipOp.Difference
-                                        ) {
-                                            drawRect(DimColor)
-                                        }
-                                    } else Modifier
-                                )
-                        )
-                    }
-                }
-            }
-        }
-        state.texts.forEach { t ->
-            key(t) {
-                TextItemView(
-                    t = t,
-                    selected = state.selected === t,
-                    ox = ox, oy = oy, scale = scale, sw = sw, sh = sh,
-                    onSelect = { state.selected = t; state.gridOpen = false; state.frameOpen = false },
-                    onMove = { dx, dy -> t.x += dx / scale; t.y += dy / scale },
-                    onResize = { d ->
-                        val nw = max(60f, t.w + d / scale)
-                        val k = nw / t.w
-                        t.w = nw
-                        t.fs = t.fs * k
-                    },
-                    onDelete = {
-                        state.texts.remove(t)
-                        if (state.selected === t) state.selected = null
-                    }
-                )
-            }
-        }
-    }
-}
-
-/* ---------- Eckkreise ---------- */
-
-@Composable
-fun DeleteHandle(modifier: Modifier, onDelete: () -> Unit) {
-    val cur by rememberUpdatedState(onDelete)
-    Box(
-        modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(Color(0xFFE53935))
-            .pointerInput(Unit) { detectTapGestures(onTap = { cur() }) },
-        contentAlignment = Alignment.Center
-    ) {
-        Text("×", color = Color.White, fontSize = 24.sp)
-    }
-}
-
-@Composable
-fun ResizeHandle(modifier: Modifier, onResize: (Float) -> Unit) {
-    val cur by rememberUpdatedState(onResize)
-    Box(
-        modifier
-            .size(36.dp)
-            .clip(CircleShape)
-            .background(Color.White)
-            .border(1.dp, Color(0xFF999999), CircleShape)
-            .pointerInput(Unit) {
-                detectDragGestures { change, drag ->
-                    change.consume()
-                    cur((drag.x + drag.y) / 2f)
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(Modifier.size(18.dp)) {
-            val s = size.minDimension
-            val sw = 2.5.dp.toPx()
-            val c = Color.Black
-            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.85f, s * 0.85f), sw, StrokeCap.Round)
-            drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.45f, s * 0.85f), sw, StrokeCap.Round)
-            drawLine(c, Offset(s * 0.85f, s * 0.85f), Offset(s * 0.85f, s * 0.45f), sw, StrokeCap.Round)
-            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.55f, s * 0.15f), sw, StrokeCap.Round)
-            drawLine(c, Offset(s * 0.15f, s * 0.15f), Offset(s * 0.15f, s * 0.55f), sw, StrokeCap.Round)
-        }
-    }
-}
-
-/**
- * x, y: Position der linken oberen Ecke des Inhalts im Container (Pixel).
- * w, h: Größe des Inhalts in Pixeln.
- * Der Rahmen um den Inhalt (ITEM_PAD ringsum) bietet Platz für die Eckkreise.
- */
-@Composable
-fun ItemFrame(
-    x: Float, y: Float, w: Float, h: Float?,
-    selected: Boolean, movable: Boolean, resizable: Boolean,
-    onSelect: () -> Unit,
-    onMove: (Float, Float) -> Unit,
-    onResize: (Float) -> Unit,
-    onDelete: () -> Unit,
-    content: @Composable () -> Unit
-) {
-    val density = LocalDensity.current
-    val padPx = with(density) { ITEM_PAD.roundToPx() }
-    val padDp = with(density) { padPx.toDp() }
-    val curSelect by rememberUpdatedState(onSelect)
-    val curMove by rememberUpdatedState(onMove)
-    val totalW = max(0, w.roundToInt()) + 2 * padPx
-    val totalH: Int? = h?.let { max(0, it.roundToInt()) + 2 * padPx }
-
-    Box(
-        Modifier
-            .offset { IntOffset(x.roundToInt() - padPx, y.roundToInt() - padPx) }
-            .layout { measurable, _ ->
-                val c = if (totalH != null) {
-                    Constraints.fixed(totalW, totalH)
-                } else {
-                    Constraints(
-                        minWidth = totalW, maxWidth = totalW,
-                        minHeight = 0, maxHeight = Constraints.Infinity
-                    )
-                }
-                val p = measurable.measure(c)
-                layout(p.width, p.height) { p.place(0, 0) }
-            }
-    ) {
-        Box(
-            Modifier
-                .padding(padDp)
-                .pointerInput(Unit) { detectTapGestures(onTap = { curSelect() }) }
-                .pointerInput(movable) {
-                    if (movable) {
-                        detectDragGestures(
-                            onDragStart = { curSelect() },
-                            onDrag = { change, drag ->
-                                change.consume()
-                                curMove(drag.x, drag.y)
-                            }
-                        )
-                    }
-                }
-                .then(if (selected) Modifier.border(2.dp, Teal) else Modifier)
-        ) {
-            content()
-        }
-
-        if (selected) {
-            DeleteHandle(Modifier.align(Alignment.TopStart), onDelete)
-            if (resizable) {
-                ResizeHandle(Modifier.align(Alignment.BottomEnd), onResize)
-            }
-        }
-    }
-}
-
-/**
- * Textfeld: wird mit derselben Routine gezeichnet wie im Export.
- * Auswahlrahmen und Eckkreise folgen Rundung und Krümmung.
- */
-@Composable
-fun TextItemView(
-    t: TxtItem, selected: Boolean,
-    ox: Int, oy: Int, scale: Float, sw: Int, sh: Int,
-    onSelect: () -> Unit,
-    onMove: (Float, Float) -> Unit,
-    onResize: (Float) -> Unit,
-    onDelete: () -> Unit
-) {
-    val density = LocalDensity.current
-    val padPx = with(density) { ITEM_PAD.roundToPx() }
-    val halfHandle = with(density) { 18.dp.toPx() }
-    val strokePx = with(density) { 2.dp.toPx() }
-    val curSelect by rememberUpdatedState(onSelect)
-    val curMove by rememberUpdatedState(onMove)
+    val dp = density.density
+    val view = rememberUpdatedState(ViewInfo(scale, ox.toFloat(), oy.toFloat()))
+    val hitR = 24f * dp
     val dimPaint = remember {
-        android.graphics.Paint().apply {
-            color = 0x80C8C8C8.toInt()
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
-        }
+        android.graphics.Paint().apply { color = android.graphics.Color.argb(128, 200, 200, 200) }
     }
 
-    val g = textGeom(t)
-    val left = ox + ((t.x + g.bx0) * scale).roundToInt()
-    val top = oy + ((t.y + g.by0) * scale).roundToInt()
-    val bw = max(1, ((g.bx1 - g.bx0) * scale).roundToInt())
-    val bh = max(1, ((g.by1 - g.by0) * scale).roundToInt())
-
-    Box(
+    Canvas(
         Modifier
-            .offset { IntOffset(left - padPx, top - padPx) }
-            .size(
-                with(density) { (bw + 2 * padPx).toDp() },
-                with(density) { (bh + 2 * padPx).toDp() }
-            )
+            .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
+            .pointerInput(state) { stageGestures(state, view, hitR) }
     ) {
-        Canvas(
-            Modifier
-                .offset { IntOffset(padPx, padPx) }
-                .size(with(density) { bw.toDp() }, with(density) { bh.toDp() })
-                .pointerInput(Unit) { detectTapGestures(onTap = { curSelect() }) }
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDragStart = { curSelect() },
-                        onDrag = { change, drag ->
-                            change.consume()
-                            curMove(drag.x, drag.y)
-                        }
-                    )
+        val nc = drawContext.canvas.nativeCanvas
+        val fx = ox.toFloat()
+        val fy = oy.toFloat()
+
+        nc.save()
+        nc.translate(fx, fy)
+        nc.scale(scale, scale)
+        drawScene(nc, state, { img, _ -> img.bmp }, { _, _ -> })
+        nc.restore()
+
+        // Alles außerhalb des weißen Feldes: 50 % graue Schicht
+        nc.save()
+        nc.clipOutRect(fx, fy, fx + cw * scale, fy + ch * scale)
+        nc.drawRect(0f, 0f, size.width, size.height, dimPaint)
+        nc.restore()
+
+        drawSelection(nc, state, fx, fy, scale, dp)
+    }
+}
+
+private fun nPaint() = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
+private fun drawSelection(
+    nc: android.graphics.Canvas, state: EditorState,
+    ox: Float, oy: Float, scale: Float, dp: Float
+) {
+    val sel = state.selected ?: return
+    val f = frameOf(state, sel) ?: return
+    val free = state.mode == Mode.FREISTIL
+
+    // Auswahlrahmen (folgt Rundung, Krümmung und Drehung)
+    nc.save()
+    nc.translate(ox, oy)
+    nc.scale(scale, scale)
+    nc.translate(f.cx, f.cy)
+    nc.rotate(f.rot)
+    nc.translate(-f.w / 2f, -f.h / 2f)
+    val sp = nPaint()
+    sp.style = android.graphics.Paint.Style.STROKE
+    sp.strokeWidth = 2f * dp / scale
+    sp.color = 0xFF3AA8C1.toInt()
+    val path = f.path
+    if (path == null) nc.drawRoundRect(0f, 0f, f.w, f.h, f.rad, f.rad, sp)
+    else nc.drawPath(path, sp)
+    nc.restore()
+
+    fun px(q: Pt): Pt {
+        val u = f.toUnit(q)
+        return Pt(ox + u.x * scale, oy + u.y * scale)
+    }
+
+    val r = 18f * dp
+    val d = px(f.tl)
+    drawDeleteHandle(nc, d.x, d.y, r, dp)
+    if (sel is TxtItem || free) {
+        val rs = px(f.br)
+        drawResizeHandle(nc, rs.x, rs.y, r, dp)
+        val ro = px(f.bl)
+        drawRotateHandle(nc, ro.x, ro.y, r, dp)
+    }
+}
+
+private fun drawDeleteHandle(nc: android.graphics.Canvas, x: Float, y: Float, r: Float, dp: Float) {
+    val p = nPaint()
+    p.color = 0xFFE53935.toInt()
+    nc.drawCircle(x, y, r, p)
+    p.color = android.graphics.Color.WHITE
+    p.style = android.graphics.Paint.Style.STROKE
+    p.strokeWidth = 2.8f * dp
+    p.strokeCap = android.graphics.Paint.Cap.ROUND
+    val l = 6f * dp
+    nc.drawLine(x - l, y - l, x + l, y + l, p)
+    nc.drawLine(x - l, y + l, x + l, y - l, p)
+}
+
+private fun drawWhiteCircle(nc: android.graphics.Canvas, x: Float, y: Float, r: Float, dp: Float) {
+    val p = nPaint()
+    p.color = android.graphics.Color.WHITE
+    nc.drawCircle(x, y, r, p)
+    p.style = android.graphics.Paint.Style.STROKE
+    p.strokeWidth = 1f * dp
+    p.color = 0xFF999999.toInt()
+    nc.drawCircle(x, y, r, p)
+}
+
+private fun drawResizeHandle(nc: android.graphics.Canvas, x: Float, y: Float, r: Float, dp: Float) {
+    drawWhiteCircle(nc, x, y, r, dp)
+    val p = nPaint()
+    p.style = android.graphics.Paint.Style.STROKE
+    p.strokeWidth = 2.5f * dp
+    p.strokeCap = android.graphics.Paint.Cap.ROUND
+    p.color = android.graphics.Color.BLACK
+    val s = 18f * dp
+    val x0 = x - s / 2f
+    val y0 = y - s / 2f
+    nc.drawLine(x0 + s * 0.15f, y0 + s * 0.15f, x0 + s * 0.85f, y0 + s * 0.85f, p)
+    nc.drawLine(x0 + s * 0.85f, y0 + s * 0.85f, x0 + s * 0.45f, y0 + s * 0.85f, p)
+    nc.drawLine(x0 + s * 0.85f, y0 + s * 0.85f, x0 + s * 0.85f, y0 + s * 0.45f, p)
+    nc.drawLine(x0 + s * 0.15f, y0 + s * 0.15f, x0 + s * 0.55f, y0 + s * 0.15f, p)
+    nc.drawLine(x0 + s * 0.15f, y0 + s * 0.15f, x0 + s * 0.15f, y0 + s * 0.55f, p)
+}
+
+private fun drawRotateHandle(nc: android.graphics.Canvas, x: Float, y: Float, r: Float, dp: Float) {
+    drawWhiteCircle(nc, x, y, r, dp)
+    val p = nPaint()
+    p.style = android.graphics.Paint.Style.STROKE
+    p.strokeWidth = 2.4f * dp
+    p.strokeCap = android.graphics.Paint.Cap.ROUND
+    p.color = android.graphics.Color.BLACK
+    val ar = 7f * dp
+    nc.drawArc(RectF(x - ar, y - ar, x + ar, y + ar), -40f, 270f, false, p)
+    // Pfeilspitze am Ende des Bogens (Winkel 230 Grad, im Uhrzeigersinn)
+    val a = Math.toRadians(230.0)
+    val ex = x + ar * cos(a).toFloat()
+    val ey = y + ar * sin(a).toFloat()
+    val tx = -sin(a).toFloat()
+    val ty = cos(a).toFloat()
+    val nx = -ty
+    val ny = tx
+    val tri = android.graphics.Path()
+    tri.moveTo(ex + tx * 5f * dp, ey + ty * 5f * dp)
+    tri.lineTo(ex + nx * 3.6f * dp, ey + ny * 3.6f * dp)
+    tri.lineTo(ex - nx * 3.6f * dp, ey - ny * 3.6f * dp)
+    tri.close()
+    p.style = android.graphics.Paint.Style.FILL
+    nc.drawPath(tri, p)
+}
+
+/**
+ * Alle Gesten auf der Fläche: Auswählen, Verschieben, Größe ändern, Drehen, Löschen.
+ * Bilder in Collage und Reihe sind nicht verschiebbar; dort scrollt die Reihe weiter.
+ */
+private suspend fun PointerInputScope.stageGestures(
+    state: EditorState, view: State<ViewInfo>, hitR: Float
+) {
+    val slop = viewConfiguration.touchSlop
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        val v = view.value
+        val p0 = down.position
+        val u0 = Pt((p0.x - v.ox) / v.scale, (p0.y - v.oy) / v.scale)
+        val free = state.mode == Mode.FREISTIL
+
+        // 1 = verschieben, 2 = Größe, 3 = drehen, 4 = löschen
+        var mode = 0
+        var target: Any? = null
+        var tapTarget: Any? = null
+
+        val sel = state.selected
+        if (sel != null) {
+            val f = frameOf(state, sel)
+            if (f != null) {
+                val canTransform = sel is TxtItem || free
+                fun near(q: Pt): Boolean {
+                    val u = f.toUnit(q)
+                    val d = Offset(v.ox + u.x * v.scale, v.oy + u.y * v.scale) - p0
+                    return d.getDistance() <= hitR
                 }
-        ) {
-            val nc = drawContext.canvas.nativeCanvas
-            val m = g.margin * scale
-            val layer = nc.saveLayer(-m, -m, bw + m, bh + m, null)
+                if (near(f.tl)) mode = 4
+                else if (canTransform && near(f.br)) mode = 2
+                else if (canTransform && near(f.bl)) mode = 3
+                if (mode != 0) target = sel
+            }
+        }
+        if (mode == 0) {
+            val hit = hitItem(state, u0, 8f / v.scale)
+            if (hit != null) {
+                tapTarget = hit
+                if (hit is TxtItem || free) {
+                    state.select(hit)
+                    target = hit
+                    mode = 1
+                }
+            }
+        }
+        if (mode != 0) down.consume()
 
-            nc.save()
-            nc.scale(scale, scale)
-            nc.translate(-g.bx0, -g.by0)
-            drawTextItem(nc, t, g)
-            nc.restore()
-
-            // Außerhalb des weißen Feldes: 50 % graue Überlagerung (nur auf Text-Pixeln)
-            val fl = (ox - left).toFloat()
-            val ft = (oy - top).toFloat()
-            nc.save()
-            nc.clipOutRect(fl, ft, fl + sw, ft + sh)
-            nc.drawRect(-m, -m, bw + m, bh + m, dimPaint)
-            nc.restore()
-            nc.restoreToCount(layer)
-
-            if (selected) {
-                val sp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
-                sp.style = android.graphics.Paint.Style.STROKE
-                sp.strokeWidth = strokePx / scale
-                sp.color = Teal.toArgb()
-                nc.save()
-                nc.scale(scale, scale)
-                nc.translate(-g.bx0, -g.by0)
-                val path = g.path
-                if (path == null) nc.drawRoundRect(0f, 0f, g.w, g.h, g.rad, g.rad, sp)
-                else nc.drawPath(path, sp)
-                nc.restore()
+        var rot0 = 0f
+        var a0 = 0f
+        var cxPx = 0f
+        var cyPx = 0f
+        if (mode == 3) {
+            val f0 = target?.let { frameOf(state, it) }
+            if (f0 != null) {
+                cxPx = v.ox + f0.cx * v.scale
+                cyPx = v.oy + f0.cy * v.scale
+                a0 = atan2(p0.y - cyPx, p0.x - cxPx)
+                rot0 = f0.rot
+            } else {
+                mode = 0
             }
         }
 
-        if (selected) {
-            val tlx = padPx + (g.tl.x - g.bx0) * scale
-            val tly = padPx + (g.tl.y - g.by0) * scale
-            val brx = padPx + (g.br.x - g.bx0) * scale
-            val bry = padPx + (g.br.y - g.by0) * scale
-            DeleteHandle(
-                Modifier.offset { IntOffset((tlx - halfHandle).roundToInt(), (tly - halfHandle).roundToInt()) },
-                onDelete
-            )
-            ResizeHandle(
-                Modifier.offset { IntOffset((brx - halfHandle).roundToInt(), (bry - halfHandle).roundToInt()) },
-                onResize
-            )
+        var prev = p0
+        var movedFar = false
+        while (true) {
+            val ev = awaitPointerEvent()
+            val ch = ev.changes.firstOrNull { it.id == down.id } ?: break
+            val pos = ch.position
+
+            if (ch.changedToUpIgnoreConsumed()) {
+                if (mode == 4) {
+                    val t = target
+                    val f = if (t != null) frameOf(state, t) else null
+                    if (t != null && f != null) {
+                        val u = f.toUnit(f.tl)
+                        val d = Offset(v.ox + u.x * v.scale, v.oy + u.y * v.scale) - pos
+                        if (d.getDistance() <= hitR * 1.4f) deleteItem(state, t)
+                    }
+                    ch.consume()
+                } else if (mode == 0) {
+                    if (!movedFar) {
+                        state.select(tapTarget)
+                        ch.consume()
+                    }
+                } else {
+                    ch.consume()
+                }
+                break
+            }
+
+            if (mode == 0) {
+                if (ch.isConsumed) break
+                if ((pos - p0).getDistance() > slop) movedFar = true
+            } else {
+                when (mode) {
+                    1 -> {
+                        val dx = (pos.x - prev.x) / v.scale
+                        val dy = (pos.y - prev.y) / v.scale
+                        when (val t = target) {
+                            is ImgItem -> { t.x += dx; t.y += dy }
+                            is TxtItem -> { t.x += dx; t.y += dy }
+                        }
+                    }
+                    2 -> {
+                        val t = target
+                        val f = if (t != null) frameOf(state, t) else null
+                        if (t != null && f != null) {
+                            val dxU = (pos.x - prev.x) / v.scale
+                            val dyU = (pos.y - prev.y) / v.scale
+                            val ia = Math.toRadians(-f.rot.toDouble())
+                            val ics = cos(ia).toFloat()
+                            val isn = sin(ia).toFloat()
+                            val d = ((dxU * ics - dyU * isn) + (dxU * isn + dyU * ics)) / 2f
+                            val minW = if (t is TxtItem) 40f else 60f
+                            val nw = max(minW, f.w + d)
+                            val k = nw / f.w
+                            // Obere linke Ecke bleibt an ihrer Stelle
+                            val tlU = f.toUnit(Pt(0f, 0f))
+                            var w2 = f.w * k
+                            var h2 = f.h * k
+                            if (t is TxtItem) {
+                                t.fs = t.fs * k
+                                val g2 = textGeom(t)
+                                w2 = g2.w
+                                h2 = g2.h
+                            } else if (t is ImgItem) {
+                                t.w = w2
+                                t.h = h2
+                            }
+                            val rr = Math.toRadians(f.rot.toDouble())
+                            val c2 = cos(rr).toFloat()
+                            val s2 = sin(rr).toFloat()
+                            val ncx = tlU.x + (w2 / 2f) * c2 - (h2 / 2f) * s2
+                            val ncy = tlU.y + (w2 / 2f) * s2 + (h2 / 2f) * c2
+                            when (t) {
+                                is ImgItem -> { t.x = ncx - w2 / 2f; t.y = ncy - h2 / 2f }
+                                is TxtItem -> { t.x = ncx - w2 / 2f; t.y = ncy - h2 / 2f }
+                            }
+                        }
+                    }
+                    3 -> {
+                        val ang = atan2(pos.y - cyPx, pos.x - cxPx)
+                        var r = rot0 + Math.toDegrees((ang - a0).toDouble()).toFloat()
+                        r = ((r % 360f) + 540f) % 360f - 180f
+                        val nearest = (r / 45f).roundToInt() * 45f
+                        if (abs(r - nearest) < 3f) r = nearest
+                        when (val t = target) {
+                            is ImgItem -> t.rot = r
+                            is TxtItem -> t.rot = r
+                        }
+                    }
+                }
+                ch.consume()
+            }
+            prev = pos
         }
     }
 }
+
+/* ---------- Bausteine ---------- */
 
 @Composable
 fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
@@ -680,7 +732,6 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
-    val gk = glitterKind(color)
     Box(
         Modifier
             .size(34.dp)
@@ -692,22 +743,7 @@ fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
                 CircleShape
             )
             .clickable { onClick() }
-    ) {
-        if (gk != 0) {
-            Canvas(Modifier.fillMaxSize()) {
-                val w = size.width
-                val h = size.height
-                val wh = Color.White.copy(alpha = 0.95f)
-                drawCircle(wh, 1.6.dp.toPx(), Offset(w * 0.28f, h * 0.32f))
-                drawCircle(wh, 1.1.dp.toPx(), Offset(w * 0.68f, h * 0.62f))
-                drawCircle(wh, 0.9.dp.toPx(), Offset(w * 0.45f, h * 0.78f))
-                val c = Offset(w * 0.70f, h * 0.26f)
-                val l = 3.5.dp.toPx()
-                drawLine(wh, Offset(c.x - l, c.y), Offset(c.x + l, c.y), 1.2.dp.toPx(), StrokeCap.Round)
-                drawLine(wh, Offset(c.x, c.y - l), Offset(c.x, c.y + l), 1.2.dp.toPx(), StrokeCap.Round)
-            }
-        }
-    }
+    )
 }
 
 /* ---------- Icons und Slider ---------- */
@@ -720,21 +756,12 @@ private fun ThicknessIcon(percent: Int) {
         val tw = (1.5f + percent / 100f * 6.5f).dp.toPx()
         val y = size.height * 0.4f
         val x = size.width / 2f
-        // Trennlinien (T) werden mit der Dicke breiter
-        drawRect(
-            c,
-            Offset(sw, max(sw, y - tw / 2f)),
-            Size(size.width - 2 * sw, tw)
-        )
-        drawRect(
-            c,
-            Offset(x - tw / 2f, y),
-            Size(tw, size.height - sw - y)
-        )
+        drawRect(c, Offset(sw, max(sw, y - tw / 2f)), Size(size.width - 2 * sw, tw))
+        drawRect(c, Offset(x - tw / 2f, y), Size(tw, size.height - sw - y))
         drawRoundRect(
             c, Offset(sw / 2f, sw / 2f),
             Size(size.width - sw, size.height - sw),
-            CornerRadius(3.dp.toPx()), Stroke(sw)
+            CornerRadius(3.dp.toPx()), style = Stroke(sw)
         )
     }
 }
@@ -748,7 +775,7 @@ private fun RoundnessIcon(percent: Int) {
         drawRoundRect(
             c, Offset(sw / 2f, sw / 2f),
             Size(size.width - sw, size.height - sw),
-            CornerRadius(r), Stroke(sw)
+            CornerRadius(r), style = Stroke(sw)
         )
     }
 }
@@ -767,6 +794,25 @@ private fun CornerIcon(percent: Int) {
         if (r > 0.5f) path.arcTo(Rect(m, m, m + 2 * r, m + 2 * r), 180f, 90f, false)
         path.lineTo(size.width - m, m)
         drawPath(path, c, style = Stroke(sw, cap = StrokeCap.Round))
+    }
+}
+
+@Composable
+private fun PadIcon(percent: Int) {
+    Canvas(Modifier.size(28.dp)) {
+        val tSize = 14.dp.toPx()
+        val m = percent / 100f * 6.dp.toPx()
+        val cx = size.width / 2f
+        val cy = size.height / 2f
+        val half = tSize / 2f
+        val tl = Offset(cx - half - m, cy - half - m)
+        val sz = Size(tSize + 2 * m, tSize + 2 * m)
+        // Rahmen (Hintergrundfläche) schmiegt sich an das T
+        drawRoundRect(Color.White, tl, sz, CornerRadius(2.dp.toPx()))
+        drawRoundRect(Color(0xFFBBBBBB), tl, sz, CornerRadius(2.dp.toPx()), style = Stroke(1.dp.toPx()))
+        val bar = 3.dp.toPx()
+        drawRect(Color.Black, Offset(cx - half, cy - half), Size(tSize, bar))
+        drawRect(Color.Black, Offset(cx - bar / 2f, cy - half), Size(bar, tSize))
     }
 }
 
@@ -881,7 +927,7 @@ private fun SliderRow(
     }
 }
 
-/* ---------- Text-Panel ---------- */
+/* ---------- Textfeld-Bearbeitungsfeld ---------- */
 
 @Composable
 fun TextPanel(t: TxtItem) {
@@ -903,7 +949,7 @@ fun TextPanel(t: TxtItem) {
             onValueChange = { t.text = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Text") },
-            maxLines = 3
+            maxLines = 4
         )
         Text("Schriftart", fontSize = 12.sp, color = Color.Black)
         Row(
@@ -919,6 +965,8 @@ fun TextPanel(t: TxtItem) {
         ) {
             PALETTE.forEach { c -> ColorDot(c, t.color == c) { t.color = c } }
         }
+        Text("Hintergrundfläche", fontSize = 12.sp, color = Color.Black)
+        SliderRow({ PadIcon(t.pad) }, t.pad, { t.pad = it })
         Text("Textfeld-Hintergrund", fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s3).horizontalScroll(s3),
@@ -950,7 +998,7 @@ fun TextPanel(t: TxtItem) {
     }
 }
 
-/* ---------- Rahmen-Panel ---------- */
+/* ---------- Rahmen-Feld ---------- */
 
 @Composable
 private fun FormatRow(state: EditorState) {
@@ -982,11 +1030,7 @@ private fun FormatRow(state: EditorState) {
                     modifier = Modifier
                         .clickable {
                             state.ratioIdx = i
-                            val (w, h) = canvasSize(state)
-                            state.texts.forEach { t ->
-                                t.x = t.x.coerceIn(0f, max(0f, w - t.w))
-                                t.y = t.y.coerceIn(0f, max(0f, h - 100f))
-                            }
+                            clampTexts(state)
                         }
                         .padding(horizontal = 4.dp, vertical = 12.dp)
                 )
@@ -995,17 +1039,73 @@ private fun FormatRow(state: EditorState) {
     }
 }
 
+/** Collage: Raster-Vorschauen, passend zur Bildanzahl und zum Format. */
+@Composable
+private fun RasterRow(state: EditorState) {
+    val sc = rememberScrollState()
+    val opts = collageOptions(state.images.size)
+    if (opts.isEmpty()) return
+    val (cw, ch) = canvasSize(state)
+    val f = 100f / max(cw, ch)
+    val tw = cw * f
+    val th = ch * f
+    val cur = state.collageIdx.coerceIn(0, opts.size - 1)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .fadingEdges(sc)
+            .horizontalScroll(sc),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        opts.forEachIndexed { i, o ->
+            val cells = collageCells(o, tw, th, 4f)
+            Canvas(
+                Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color(0xFFE0E0E0))
+                    .then(
+                        if (i == cur) Modifier.border(2.dp, Teal, RoundedCornerShape(5.dp)) else Modifier
+                    )
+                    .clickable { state.collageIdx = i }
+            ) {
+                val k = size.width / 100f
+                val offX = (100f - tw) / 2f * k
+                val offY = (100f - th) / 2f * k
+                drawRect(Color(0xFFCCCCCC), topLeft = Offset(offX, offY), size = Size(tw * k, th * k))
+                for (c in cells) {
+                    drawRect(
+                        Color(0xFF7CC6D4),
+                        topLeft = Offset(offX + c.x * k, offY + c.y * k),
+                        size = Size(c.w * k, c.h * k)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun FramePanel(state: EditorState) {
     val cs = rememberScrollState()
+    val maxH = if (state.mode == Mode.REIHE) 156.dp else 204.dp
     Column(
         Modifier
             .fillMaxWidth()
             .background(Color(0xFFF4F4F4))
+            .heightIn(max = maxH)
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
-        if (state.mode != Mode.REIHE) {
+        if (state.mode == Mode.REIHE) {
+            Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                FormatButton(state, Modifier.width(92.dp))
+            }
+        } else {
             FormatRow(state)
+            if (state.mode == Mode.COLLAGE) RasterRow(state)
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon(state.gap) }
@@ -1023,58 +1123,6 @@ fun FramePanel(state: EditorState) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 PALETTE.forEach { c -> ColorDot(c, state.frameColor == c) { state.frameColor = c } }
-            }
-        }
-    }
-}
-
-@Composable
-fun GridPicker(state: EditorState) {
-    val opts = collageOptions(state.images.size)
-    val (cw, ch) = canvasSize(state)
-    val f = 100f / max(cw, ch)
-    val tw = cw * f
-    val th = ch * f
-    val sc = rememberScrollState()
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .background(Color.White)
-            .fadingEdges(sc)
-            .horizontalScroll(sc)
-            .padding(10.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        if (opts.isEmpty()) {
-            Text("Füge zuerst Bilder hinzu.", color = Color.Black)
-        }
-        opts.forEachIndexed { i, o ->
-            val isSel = i == state.collageIdx.coerceIn(0, opts.size - 1)
-            val cells = collageCells(o, tw, th, 4f)
-            Canvas(
-                Modifier
-                    .size(64.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(0xFFE0E0E0))
-                    .then(
-                        if (isSel) Modifier.border(3.dp, Teal, RoundedCornerShape(6.dp)) else Modifier
-                    )
-                    .clickable {
-                        state.collageIdx = i
-                        state.gridOpen = false
-                    }
-            ) {
-                val k = size.width / 100f
-                val offX = (100f - tw) / 2f * k
-                val offY = (100f - th) / 2f * k
-                drawRect(Color(0xFFCCCCCC), topLeft = Offset(offX, offY), size = Size(tw * k, th * k))
-                for (c in cells) {
-                    drawRect(
-                        Color(0xFF7CC6D4),
-                        topLeft = Offset(offX + c.x * k, offY + c.y * k),
-                        size = Size(c.w * k, c.h * k)
-                    )
-                }
             }
         }
     }
@@ -1159,6 +1207,7 @@ fun Pip(on: Boolean) {
     )
 }
 
+/** Der Format-Button der Reihe (vertikal/horizontal), jetzt im Rahmen-Feld. */
 @Composable
 fun FormatButton(state: EditorState, modifier: Modifier) {
     val shape = RoundedCornerShape(22.dp)
@@ -1171,11 +1220,7 @@ fun FormatButton(state: EditorState, modifier: Modifier) {
             .border(4.dp, Color.White, shape)
             .clickable {
                 state.vertical = !state.vertical
-                val (w, h) = canvasSize(state)
-                state.texts.forEach { t ->
-                    t.x = t.x.coerceIn(0f, max(0f, w - t.w))
-                    t.y = t.y.coerceIn(0f, max(0f, h - 100f))
-                }
+                clampTexts(state)
             },
         contentAlignment = Alignment.Center
     ) {
@@ -1198,7 +1243,7 @@ fun FormatButton(state: EditorState, modifier: Modifier) {
 }
 
 @Composable
-fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
+fun BottomBar(onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -1207,27 +1252,8 @@ fun BottomBar(state: EditorState, onAdd: () -> Unit, onText: () -> Unit, onFrame
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        when (state.mode) {
-            Mode.FREISTIL -> {
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("Text", 22, Modifier.weight(1f), onText)
-            }
-            Mode.REIHE -> {
-                FormatButton(state, Modifier.weight(1f))
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Text", 20, Modifier.weight(1f), onText)
-            }
-            Mode.COLLAGE -> {
-                BarButton("+", 34, Modifier.weight(1f), onAdd)
-                BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-                BarButton("Raster", 16, Modifier.weight(1f)) {
-                    state.gridOpen = !state.gridOpen
-                    if (state.gridOpen) state.frameOpen = false
-                }
-                BarButton("Text", 20, Modifier.weight(1f), onText)
-            }
-        }
+        BarButton("+", 34, Modifier.weight(1f), onAdd)
+        BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
+        BarButton("Text", 22, Modifier.weight(1f), onText)
     }
 }
