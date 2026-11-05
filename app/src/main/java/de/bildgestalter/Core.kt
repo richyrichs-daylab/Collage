@@ -20,8 +20,6 @@ import android.graphics.Typeface
 import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
-import android.text.Layout
-import android.text.StaticLayout
 import android.text.TextPaint
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -58,9 +56,9 @@ fun typefaceOf(i: Int): Typeface = when (i) {
     else -> Typeface.create(Typeface.SANS_SERIF, Typeface.ITALIC)
 }
 
-/* ---------- Glitzer-Farben ---------- */
+/* ---------- Gold und Silber ---------- */
 
-// Spezielle Farbwerte, die als Glitzer gezeichnet werden
+// Spezielle Farbwerte, die als Metall gezeichnet werden
 val GOLD = Color(0xFFD4AF37)
 val SILVER = Color(0xFFC0C0C0)
 
@@ -70,94 +68,83 @@ fun glitterKind(c: Color?): Int = when (c) {
     else -> 0
 }
 
-private const val TILE_PX = 256
-private const val TILE_UNITS = 60f
+private const val TILE = 512
+private const val GRAIN_UNITS = 1.4f
 private val tileCache = HashMap<Int, Bitmap>()
 
-private fun glitterTile(kind: Int): Bitmap = synchronized(tileCache) {
-    tileCache.getOrPut(kind) {
-        val b = Bitmap.createBitmap(TILE_PX, TILE_PX, Bitmap.Config.ARGB_8888)
-        val cv = Canvas(b)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        val rnd = java.util.Random(if (kind == 1) 17L else 29L)
-        // Dunkle Pünktchen für Tiefe
-        for (i in 0 until 90) {
-            p.color = if (kind == 1) {
-                android.graphics.Color.argb(70 + rnd.nextInt(80), 120, 80, 0)
-            } else {
-                android.graphics.Color.argb(70 + rnd.nextInt(80), 70, 70, 80)
-            }
-            cv.drawCircle(
-                rnd.nextFloat() * TILE_PX, rnd.nextFloat() * TILE_PX,
-                2f + rnd.nextFloat() * 4f, p
-            )
-        }
-        // Helle Glitzerpunkte
-        for (i in 0 until 170) {
-            val a = 110 + rnd.nextInt(145)
-            p.color = if (kind == 1) {
-                android.graphics.Color.argb(a, 255, 240 + rnd.nextInt(15), 170 + rnd.nextInt(60))
-            } else {
-                android.graphics.Color.argb(a, 255, 255, 255)
-            }
-            cv.drawCircle(
-                rnd.nextFloat() * TILE_PX, rnd.nextFloat() * TILE_PX,
-                2f + rnd.nextFloat() * 5f, p
-            )
-        }
-        // Sternchen
-        val sp = Paint(Paint.ANTI_ALIAS_FLAG)
-        sp.style = Paint.Style.STROKE
-        sp.strokeCap = Paint.Cap.ROUND
-        sp.strokeWidth = 3f
-        sp.color = android.graphics.Color.argb(230, 255, 255, 235)
-        val fp = Paint(Paint.ANTI_ALIAS_FLAG)
-        fp.color = android.graphics.Color.WHITE
-        for (i in 0 until 16) {
-            val x = 20f + rnd.nextFloat() * (TILE_PX - 40f)
-            val y = 20f + rnd.nextFloat() * (TILE_PX - 40f)
-            val l = 9f + rnd.nextFloat() * 15f
-            cv.drawLine(x - l, y, x + l, y, sp)
-            cv.drawLine(x, y - l, x, y + l, sp)
-            cv.drawCircle(x, y, 3.5f, fp)
-        }
-        b
-    }
+private fun grainTile(kind: Int): Bitmap = synchronized(tileCache) {
+    tileCache.getOrPut(kind) { makeTile(kind) }
 }
 
-/**
- * Metallverlauf mit Glitzer. w, h: Größe des Bereichs (für den Verlauf),
- * k: Pixel pro Einheit (Größe der Glitzerpunkte).
- */
-fun glitterShader(kind: Int, w: Float, h: Float, k: Float): Shader {
-    val cols = if (kind == 1) {
-        intArrayOf(
-            0xFFB8860B.toInt(), 0xFFFFE27A.toInt(), 0xFFD4AF37.toInt(), 0xFFFFF3B0.toInt(),
-            0xFFC9971C.toInt(), 0xFFFFE27A.toInt(), 0xFFB8860B.toInt()
+// Sehr feines Korn (Gold) bzw. gebürstete Streifen (Silber), nahtlos kachelbar
+private fun makeTile(kind: Int): Bitmap {
+    val px = IntArray(TILE * TILE)
+    val rnd = java.util.Random(if (kind == 1) 11L else 23L)
+    if (kind == 1) {
+        for (i in px.indices) {
+            val v = rnd.nextGaussian().toFloat()
+            val a = (min(1f, abs(v) * 0.4f) * 70f).toInt()
+            px[i] = if (v >= 0f) android.graphics.Color.argb(a, 255, 244, 190)
+            else android.graphics.Color.argb(a, 110, 70, 0)
+        }
+    } else {
+        val tau = (2.0 * Math.PI).toFloat()
+        val freq = floatArrayOf(3f, 8f, 21f)
+        val amp = floatArrayOf(0.5f, 0.35f, 0.25f)
+        for (y in 0 until TILE) {
+            val rowV = rnd.nextGaussian().toFloat()
+            val ph = FloatArray(3) { rnd.nextFloat() * tau }
+            for (x in 0 until TILE) {
+                var wv = 0f
+                for (j in 0..2) wv += amp[j] * sin(tau * freq[j] * x / TILE + ph[j])
+                val v = rowV * 0.9f + wv * 0.6f + rnd.nextGaussian().toFloat() * 0.2f
+                val a = (min(1f, abs(v) * 0.3f) * 60f).toInt()
+                px[y * TILE + x] = if (v >= 0f) android.graphics.Color.argb(a, 255, 255, 255)
+                else android.graphics.Color.argb(a, 90, 90, 95)
+            }
+        }
+    }
+    return Bitmap.createBitmap(px, TILE, TILE, Bitmap.Config.ARGB_8888)
+}
+
+/** Metall-Verlauf aus einem Guss (w, h = Größe der Fläche, in der gezeichnet wird). */
+fun glitterShader(kind: Int, w: Float, h: Float): Shader {
+    val ww = max(1f, w)
+    val hh = max(1f, h)
+    val grad: Shader = if (kind == 1) {
+        LinearGradient(
+            0f, hh, ww, 0f,
+            intArrayOf(
+                0xFFB8842A.toInt(), 0xFFD6AB3B.toInt(), 0xFFEBD36B.toInt(),
+                0xFFE3C75C.toInt(), 0xFFD3AA36.toInt()
+            ),
+            floatArrayOf(0f, 0.3f, 0.58f, 0.8f, 1f),
+            Shader.TileMode.CLAMP
         )
     } else {
-        intArrayOf(
-            0xFF8E8E8E.toInt(), 0xFFF5F5F5.toInt(), 0xFFBDBDBD.toInt(), 0xFFFFFFFF.toInt(),
-            0xFFA0A0A0.toInt(), 0xFFEDEDED.toInt(), 0xFF8E8E8E.toInt()
+        LinearGradient(
+            0f, 0f, 0f, hh,
+            intArrayOf(0xFFB2B2B2.toInt(), 0xFFF2F2F2.toInt(), 0xFFD4D4D4.toInt(), 0xFFBCBCBC.toInt()),
+            floatArrayOf(0f, 0.27f, 0.62f, 1f),
+            Shader.TileMode.CLAMP
         )
     }
-    val grad = LinearGradient(0f, 0f, max(1f, w), max(1f, h), cols, null, Shader.TileMode.MIRROR)
-    val tile = BitmapShader(glitterTile(kind), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+    val tile = BitmapShader(grainTile(kind), Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
     val m = Matrix()
-    val sc = TILE_UNITS * k / TILE_PX
-    m.setScale(sc, sc)
+    m.setScale(GRAIN_UNITS, GRAIN_UNITS)
     tile.setLocalMatrix(m)
     return ComposeShader(grad, tile, PorterDuff.Mode.SRC_OVER)
 }
 
-fun applyFill(p: Paint, c: Color, w: Float, h: Float, k: Float = 1f) {
+fun applyFill(p: Paint, c: Color, w: Float, h: Float) {
     val gk = glitterKind(c)
     if (gk == 0) {
         p.shader = null
         p.color = c.toArgb()
     } else {
         p.color = android.graphics.Color.WHITE
-        p.shader = glitterShader(gk, w, h, k)
+        p.isFilterBitmap = true
+        p.shader = glitterShader(gk, w, h)
     }
 }
 
@@ -197,24 +184,26 @@ class ImgItem(val bmp: Bitmap, val uri: Uri?) {
     var y by mutableStateOf(0f)
     var w by mutableStateOf(500f)
     var h by mutableStateOf(500f)
+    var rot by mutableStateOf(0f)        // Drehung in Grad (nur Freistil)
 }
 
 class TxtItem {
     var text by mutableStateOf("Text")
-    var x by mutableStateOf(100f)
+    var x by mutableStateOf(100f)        // linke obere Ecke des Textfeldes
     var y by mutableStateOf(100f)
-    var w by mutableStateOf(540f)
-    var fs by mutableStateOf(64f)
+    var fs by mutableStateOf(100f)       // Schriftgröße
     var font by mutableStateOf(0)
     var color by mutableStateOf(Color.Black)
     var bg by mutableStateOf<Color?>(null)
     var align by mutableStateOf(1)
 
+    var pad by mutableStateOf(100)       // Hintergrundfläche 0..100
     var transp by mutableStateOf(0)      // Transparenz 0..100 (100 = unsichtbar)
     var corner by mutableStateOf(0)      // Abgerundete Ecken 0..100
     var lineSp by mutableStateOf(50)     // Zeilenabstand 0..100 (50 = normal)
     var letterSp by mutableStateOf(50)   // Buchstabenabstand 0..100 (50 = normal)
     var curve by mutableStateOf(0)       // Zeilenkrümmung -100..100
+    var rot by mutableStateOf(0f)        // Drehung in Grad
 }
 
 class EditorState(val mode: Mode) {
@@ -223,7 +212,6 @@ class EditorState(val mode: Mode) {
     var selected by mutableStateOf<Any?>(null)
     var vertical by mutableStateOf(true)
     var collageIdx by mutableStateOf(0)
-    var gridOpen by mutableStateOf(false)
 
     // Rahmen
     var frameOpen by mutableStateOf(false)
@@ -236,6 +224,19 @@ class EditorState(val mode: Mode) {
 
     // Bildauflösung: 0 = HD, 1 = durchschnittlich, 2 = sparsam
     var quality by mutableStateOf(0)
+}
+
+fun EditorState.select(item: Any?) {
+    selected = item
+    if (item is TxtItem) frameOpen = false
+}
+
+fun deleteItem(s: EditorState, item: Any) {
+    when (item) {
+        is ImgItem -> s.images.remove(item)
+        is TxtItem -> s.texts.remove(item)
+    }
+    if (s.selected === item) s.selected = null
 }
 
 fun EditorState.addImages(list: List<Loaded>) {
@@ -272,16 +273,13 @@ fun EditorState.addImages(list: List<Loaded>) {
     }
 }
 
-fun EditorState.addText(x: Float, y: Float, w: Float = 540f) {
-    val t = TxtItem()
-    t.x = x
-    t.y = y
-    t.w = w
-    t.fs = 64f * w / 540f
-    texts.add(t)
-    selected = t
-    gridOpen = false
-    frameOpen = false
+fun clampTexts(s: EditorState) {
+    val (w, h) = canvasSize(s)
+    s.texts.forEach { t ->
+        val g = textGeom(t)
+        t.x = t.x.coerceIn(0f, max(0f, w - g.w))
+        t.y = t.y.coerceIn(0f, max(0f, h - g.h))
+    }
 }
 
 /* ---------- Text: Geometrie, Krümmung, Zeichnen ---------- */
@@ -339,43 +337,83 @@ fun letterEm(p: Int): Float =
     if (p <= 50) (p - 50) / 50f * 0.1f else (p - 50) / 50f * 0.5f
 
 class TextGeom(
-    val sl: StaticLayout,
-    val w: Float, val h: Float, val pad: Float, val rad: Float,
+    val w: Float, val h: Float, val rad: Float,
+    val lines: List<String>, val lx: FloatArray, val ly: FloatArray,
+    val paint: TextPaint,
     val bx0: Float, val by0: Float, val bx1: Float, val by1: Float,
     val path: Path?,
-    val tl: Pt, val br: Pt,
+    val tl: Pt, val br: Pt, val bl: Pt,
     val margin: Float
 )
 
+/**
+ * Berechnet das Textfeld: Die Größe richtet sich nach den eingegebenen Zeichen.
+ * Hintergrundfläche 0 % = exakt der Rand der Zeichen, 100 % = eine "T"-Höhe darüber hinaus.
+ */
 fun textGeom(t: TxtItem): TextGeom {
-    val pad = t.fs * 0.25f
     val tp = TextPaint(Paint.ANTI_ALIAS_FLAG)
     tp.textSize = t.fs
-    tp.color = if (glitterKind(t.color) != 0) android.graphics.Color.BLACK else t.color.toArgb()
     tp.typeface = typefaceOf(t.font)
     tp.letterSpacing = letterEm(t.letterSp)
-    val inner = max(1, (t.w - 2 * pad).roundToInt())
-    val txt = if (t.text.isEmpty()) " " else t.text
-    val al = when (t.align) {
-        0 -> Layout.Alignment.ALIGN_NORMAL
-        2 -> Layout.Alignment.ALIGN_OPPOSITE
-        else -> Layout.Alignment.ALIGN_CENTER
+    tp.color = if (glitterKind(t.color) != 0) android.graphics.Color.BLACK else t.color.toArgb()
+
+    val raw = if (t.text.isEmpty()) " " else t.text
+    val lines = raw.split("\n")
+    val fm = tp.fontMetrics
+    val lh = (fm.descent - fm.ascent) * lineMult(t.lineSp)
+    val rc = Rect()
+    tp.getTextBounds("T", 0, 1, rc)
+    val capH = max(1f, rc.height().toFloat())
+
+    val adv = FloatArray(lines.size) { tp.measureText(lines[it]) }
+    val maxAdv = adv.maxOrNull() ?: 0f
+    val lx0 = FloatArray(lines.size) {
+        when (t.align) {
+            0 -> 0f
+            2 -> maxAdv - adv[it]
+            else -> (maxAdv - adv[it]) / 2f
+        }
     }
-    val sl = StaticLayout.Builder.obtain(txt, 0, txt.length, tp, inner)
-        .setAlignment(al)
-        .setIncludePad(false)
-        .setLineSpacing(0f, lineMult(t.lineSp))
-        .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE)
-        .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-        .build()
-    val w = t.w
-    val h = sl.height + 2 * pad
+    val ly0 = FloatArray(lines.size) { -fm.ascent + it * lh }
+
+    var inkL = Float.MAX_VALUE
+    var inkR = -Float.MAX_VALUE
+    var inkT = Float.MAX_VALUE
+    var inkB = -Float.MAX_VALUE
+    var any = false
+    for (i in lines.indices) {
+        if (lines[i].isBlank()) continue
+        tp.getTextBounds(lines[i], 0, lines[i].length, rc)
+        any = true
+        inkL = min(inkL, lx0[i] + rc.left)
+        inkR = max(inkR, lx0[i] + rc.right)
+        inkT = min(inkT, ly0[i] + rc.top)
+        inkB = max(inkB, ly0[i] + rc.bottom)
+    }
+    if (!any) {
+        inkL = 0f
+        inkR = max(1f, tp.measureText(" "))
+        inkT = ly0[0] - capH
+        inkB = ly0[0]
+    }
+
+    val m = capH * t.pad / 100f
+    val w = max(1f, (inkR - inkL) + 2 * m)
+    val h = max(1f, (inkB - inkT) + 2 * m)
+    val sx = m - inkL
+    val sy = m - inkT
+    val lx = FloatArray(lines.size) { lx0[it] + sx }
+    val ly = FloatArray(lines.size) { ly0[it] + sy }
+
     val rad = t.corner / 100f * min(w, h) / 2f
     val a = min(rad, min(w, h) / 2f) * 0.29289322f
     val margin = t.fs * 0.5f
     val wp = Warp(w, h, t.curve)
     if (!wp.on) {
-        return TextGeom(sl, w, h, pad, rad, 0f, 0f, w, h, null, Pt(a, a), Pt(w - a, h - a), margin)
+        return TextGeom(
+            w, h, rad, lines, lx, ly, tp, 0f, 0f, w, h, null,
+            Pt(a, a), Pt(w - a, h - a), Pt(a, h - a), margin
+        )
     }
     val pts = outlinePoints(w, h, rad, 96).map { wp.map(it.x, it.y) }
     var x0 = Float.MAX_VALUE
@@ -390,42 +428,35 @@ fun textGeom(t: TxtItem): TextGeom {
     }
     path.close()
     return TextGeom(
-        sl, w, h, pad, rad, x0, y0, x1, y1, path,
-        wp.map(a, a), wp.map(w - a, h - a), margin
+        w, h, rad, lines, lx, ly, tp, x0, y0, x1, y1, path,
+        wp.map(a, a), wp.map(w - a, h - a), wp.map(a, h - a), margin
     )
 }
 
 private fun drawGlyphs(c: Canvas, t: TxtItem, g: TextGeom) {
-    val sl = g.sl
+    val tp = g.paint
     if (t.curve == 0) {
-        c.save()
-        c.translate(g.pad, g.pad)
-        sl.draw(c)
-        c.restore()
+        for (i in g.lines.indices) c.drawText(g.lines[i], g.lx[i], g.ly[i], tp)
         return
     }
-    val gp = TextPaint(sl.paint)
+    val gp = TextPaint(tp)
     gp.letterSpacing = 0f
-    val txt = sl.text
     val wp = Warp(g.w, g.h, t.curve)
     val sgn = if (t.curve > 0) 1f else -1f
-    for (line in 0 until sl.lineCount) {
-        val ls = sl.getLineStart(line)
-        val le = sl.getLineEnd(line)
-        val base = g.pad + sl.getLineBaseline(line)
-        var i = ls
-        while (i < le) {
-            val cp = Character.codePointAt(txt, i)
+    for (li in g.lines.indices) {
+        val line = g.lines[li]
+        var i = 0
+        while (i < line.length) {
+            val cp = Character.codePointAt(line, i)
             val n = Character.charCount(cp)
             val next = i + n
             if (cp > 32) {
-                val x0 = sl.getPrimaryHorizontal(i)
-                val x1 = if (next < le) sl.getPrimaryHorizontal(next) else sl.getLineRight(line)
-                val s = String(Character.toChars(cp))
+                val x0 = tp.measureText(line, 0, i)
+                val x1 = tp.measureText(line, 0, next)
+                val s = line.substring(i, next)
                 val wd = gp.measureText(s)
-                val cx = if (x1 > x0) (x0 + x1) / 2f else x0 + wd / 2f
-                val u = g.pad + cx
-                val p = wp.map(u, base)
+                val u = g.lx[li] + (x0 + x1) / 2f
+                val p = wp.map(u, g.ly[li])
                 c.save()
                 c.translate(p.x, p.y)
                 c.rotate(sgn * wp.phi(u) * 57.29578f)
@@ -443,10 +474,10 @@ fun drawTextItem(c: Canvas, t: TxtItem, g: TextGeom) {
     if (alpha <= 0) return
     val m = g.margin
     val l = g.bx0 - m
-    val tp = g.by0 - m
+    val top = g.by0 - m
     val r = g.bx1 + m
     val b = g.by1 + m
-    val outer = c.saveLayerAlpha(l, tp, r, b, alpha)
+    val outer = if (alpha < 255) c.saveLayerAlpha(l, top, r, b, alpha) else c.save()
 
     val bg = t.bg
     if (bg != null) {
@@ -459,17 +490,97 @@ fun drawTextItem(c: Canvas, t: TxtItem, g: TextGeom) {
 
     val gk = glitterKind(t.color)
     if (gk != 0) {
-        val inner = c.saveLayer(l, tp, r, b, null)
+        val inner = c.saveLayer(l, top, r, b, null)
         drawGlyphs(c, t, g)
         val gp = Paint()
-        gp.shader = glitterShader(gk, g.w, g.h, 1f)
+        gp.isFilterBitmap = true
+        gp.shader = glitterShader(gk, g.w, g.h)
         gp.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
-        c.drawRect(l, tp, r, b, gp)
+        c.drawRect(l, top, r, b, gp)
         c.restoreToCount(inner)
     } else {
         drawGlyphs(c, t, g)
     }
     c.restoreToCount(outer)
+}
+
+/* ---------- Rahmen, Treffer und Griffe ---------- */
+
+/**
+ * Beschreibt ein Element (Bild oder Text) mit Mittelpunkt, Größe und Drehung.
+ * Punkte (tl, br, bl, hx0..) liegen im Koordinatensystem des unverdrehten Feldes.
+ */
+class Frame(
+    val cx: Float, val cy: Float, val w: Float, val h: Float, val rot: Float,
+    val tl: Pt, val br: Pt, val bl: Pt,
+    val hx0: Float, val hy0: Float, val hx1: Float, val hy1: Float,
+    val rad: Float, val path: Path?
+) {
+    fun toUnit(q: Pt): Pt {
+        val a = Math.toRadians(rot.toDouble())
+        val cs = cos(a).toFloat()
+        val sn = sin(a).toFloat()
+        val dx = q.x - w / 2f
+        val dy = q.y - h / 2f
+        return Pt(cx + dx * cs - dy * sn, cy + dx * sn + dy * cs)
+    }
+
+    fun toLocal(u: Pt): Pt {
+        val a = Math.toRadians(-rot.toDouble())
+        val cs = cos(a).toFloat()
+        val sn = sin(a).toFloat()
+        val dx = u.x - cx
+        val dy = u.y - cy
+        return Pt(dx * cs - dy * sn + w / 2f, dx * sn + dy * cs + h / 2f)
+    }
+
+    fun contains(u: Pt, slop: Float): Boolean {
+        val q = toLocal(u)
+        return q.x >= hx0 - slop && q.x <= hx1 + slop && q.y >= hy0 - slop && q.y <= hy1 + slop
+    }
+}
+
+fun imageFrame(s: EditorState, rects: List<Cell>, i: Int): Frame? {
+    val r = rects.getOrNull(i) ?: return null
+    val img = s.images.getOrNull(i) ?: return null
+    val rad = s.rundung / 100f * min(r.w, r.h) / 2f
+    val a = min(rad, min(r.w, r.h) / 2f) * 0.29289322f
+    val rot = if (s.mode == Mode.FREISTIL) img.rot else 0f
+    return Frame(
+        r.x + r.w / 2f, r.y + r.h / 2f, r.w, r.h, rot,
+        Pt(a, a), Pt(r.w - a, r.h - a), Pt(a, r.h - a),
+        0f, 0f, r.w, r.h, rad, null
+    )
+}
+
+fun frameOf(s: EditorState, item: Any): Frame? {
+    if (item is ImgItem) {
+        val i = s.images.indexOf(item)
+        if (i < 0) return null
+        return imageFrame(s, rectsOf(s), i)
+    }
+    if (item is TxtItem) {
+        val g = textGeom(item)
+        return Frame(
+            item.x + g.w / 2f, item.y + g.h / 2f, g.w, g.h, item.rot,
+            g.tl, g.br, g.bl, g.bx0, g.by0, g.bx1, g.by1, g.rad, g.path
+        )
+    }
+    return null
+}
+
+/** Oberstes Element an der Stelle u (in Canvas-Einheiten). Texte liegen über Bildern. */
+fun hitItem(s: EditorState, u: Pt, slop: Float): Any? {
+    for (t in s.texts.asReversed()) {
+        val f = frameOf(s, t) ?: continue
+        if (f.contains(u, slop)) return t
+    }
+    val rects = rectsOf(s)
+    for (i in s.images.indices.reversed()) {
+        val f = imageFrame(s, rects, i) ?: continue
+        if (f.contains(u, slop)) return s.images[i]
+    }
+    return null
 }
 
 /* ---------- Collage-Raster ---------- */
@@ -627,57 +738,57 @@ fun decodeForExport(context: Context, uri: Uri?, needW: Float, needH: Float): Bi
     }
 }
 
-/* ---------- Export ---------- */
+/* ---------- Gemeinsame Zeichenroutine (Vorschau und Export) ---------- */
 
-fun renderBitmap(context: Context, s: EditorState): Bitmap {
+/**
+ * Zeichnet die komplette Fläche in Canvas-Einheiten (0..cw, 0..ch).
+ * Vorschau und Export benutzen genau diese Funktion, damit sie gleich aussehen.
+ */
+fun drawScene(
+    c: Canvas,
+    s: EditorState,
+    fetch: (ImgItem, Cell) -> Bitmap,
+    release: (ImgItem, Bitmap) -> Unit
+) {
     val (cw, ch) = canvasSize(s)
     val rects = rectsOf(s)
-    var k = QUALITY_PX[s.quality.coerceIn(0, 2)] / BASE
-    k = min(k, 16000f / max(cw, ch))
-    k = min(k, sqrt(28_000_000f / (cw * ch)))
-    val bw = max(1, (cw * k).roundToInt())
-    val bh = max(1, (ch * k).roundToInt())
-    val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
-    val c = Canvas(bmp)
     val free = s.mode == Mode.FREISTIL
-    c.scale(k, k)
-    if (free) {
-        c.drawColor(android.graphics.Color.WHITE)
-    } else {
-        val bgp = Paint()
-        applyFill(bgp, s.frameColor, cw, ch)
-        c.drawRect(0f, 0f, cw, ch, bgp)
-    }
+
+    val bgp = Paint()
+    if (free) bgp.color = android.graphics.Color.WHITE
+    else applyFill(bgp, s.frameColor, cw, ch)
+    c.drawRect(0f, 0f, cw, ch, bgp)
+
     val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
     s.images.forEachIndexed { i, img ->
         val r = rects.getOrNull(i)
         if (r != null) {
-            val pw = img.bmp.width.toFloat()
-            val ph = img.bmp.height.toFloat()
-            val sc = max(r.w / pw, r.h / ph)
-            val fx = min(1f, r.w / sc / pw)
-            val fy = min(1f, r.h / sc / ph)
-
-            val full = decodeForExport(context, img.uri, r.w * k / fx, r.h * k / fy)
-            val srcBmp = full ?: img.bmp
-            val sw0 = srcBmp.width
-            val sh0 = srcBmp.height
-            val cropW = sw0 * fx
-            val cropH = sh0 * fy
-            val left = ((sw0 - cropW) / 2f).roundToInt().coerceIn(0, sw0 - 1)
-            val top = ((sh0 - cropH) / 2f).roundToInt().coerceIn(0, sh0 - 1)
-            val right = (left + cropW).roundToInt().coerceIn(left + 1, sw0)
-            val bottom = (top + cropH).roundToInt().coerceIn(top + 1, sh0)
+            val bmp = fetch(img, r)
+            val bw = bmp.width.toFloat()
+            val bh = bmp.height.toFloat()
+            val sc = max(r.w / bw, r.h / bh)
+            val cropW = r.w / sc
+            val cropH = r.h / sc
+            val left = ((bw - cropW) / 2f).roundToInt().coerceIn(0, bmp.width - 1)
+            val top = ((bh - cropH) / 2f).roundToInt().coerceIn(0, bmp.height - 1)
+            val right = (left + cropW).roundToInt().coerceIn(left + 1, bmp.width)
+            val bottom = (top + cropH).roundToInt().coerceIn(top + 1, bmp.height)
             val src = Rect(left, top, right, bottom)
 
-            val dst = RectF(r.x, r.y, r.x + r.w, r.y + r.h)
+            val rot = if (free) img.rot else 0f
+            c.save()
+            c.translate(r.x + r.w / 2f, r.y + r.h / 2f)
+            c.rotate(rot)
+            c.translate(-r.w / 2f, -r.h / 2f)
+
+            val dst = RectF(0f, 0f, r.w, r.h)
             val rad = s.rundung / 100f * min(r.w, r.h) / 2f
             if (rad > 0.5f) {
                 // Bild in eigener Ebene zeichnen, dann alles AUSSERHALB der
                 // Rundform wegradieren (Gegenteil der Rundform mit DST_OUT)
                 val layer = c.saveLayer(dst, null)
-                c.drawBitmap(srcBmp, src, dst, paint)
+                c.drawBitmap(bmp, src, dst, paint)
                 val outside = Path()
                 outside.addRoundRect(dst, rad, rad, Path.Direction.CW)
                 outside.fillType = Path.FillType.INVERSE_WINDING
@@ -687,7 +798,7 @@ fun renderBitmap(context: Context, s: EditorState): Bitmap {
                 c.drawPath(outside, mp)
                 c.restoreToCount(layer)
             } else {
-                c.drawBitmap(srcBmp, src, dst, paint)
+                c.drawBitmap(bmp, src, dst, paint)
             }
             if (free && s.gap > 0) {
                 val b = s.gap * 0.6f
@@ -695,21 +806,51 @@ fun renderBitmap(context: Context, s: EditorState): Bitmap {
                 bp.style = Paint.Style.STROKE
                 bp.strokeWidth = b
                 applyFill(bp, s.frameColor, cw, ch)
-                val inner = RectF(dst.left + b / 2f, dst.top + b / 2f, dst.right - b / 2f, dst.bottom - b / 2f)
+                val inner = RectF(b / 2f, b / 2f, r.w - b / 2f, r.h - b / 2f)
                 val ir = max(0f, rad - b / 2f)
                 c.drawRoundRect(inner, ir, ir, bp)
             }
-            if (full != null) full.recycle()
+            c.restore()
+            release(img, bmp)
         }
     }
 
     for (t in s.texts) {
         val g = textGeom(t)
         c.save()
-        c.translate(t.x, t.y)
+        c.translate(t.x + g.w / 2f, t.y + g.h / 2f)
+        c.rotate(t.rot)
+        c.translate(-g.w / 2f, -g.h / 2f)
         drawTextItem(c, t, g)
         c.restore()
     }
+}
+
+/* ---------- Export ---------- */
+
+fun renderBitmap(context: Context, s: EditorState): Bitmap {
+    val (cw, ch) = canvasSize(s)
+    var k = QUALITY_PX[s.quality.coerceIn(0, 2)] / BASE
+    k = min(k, 16000f / max(cw, ch))
+    k = min(k, sqrt(28_000_000f / (cw * ch)))
+    val bw = max(1, (cw * k).roundToInt())
+    val bh = max(1, (ch * k).roundToInt())
+    val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+    val c = Canvas(bmp)
+    c.scale(k, k)
+    val kk = k
+    drawScene(
+        c, s,
+        fetch = { img, r ->
+            val pw = img.bmp.width.toFloat()
+            val ph = img.bmp.height.toFloat()
+            val sc = max(r.w / pw, r.h / ph)
+            val fx = min(1f, r.w / sc / pw)
+            val fy = min(1f, r.h / sc / ph)
+            decodeForExport(context, img.uri, r.w * kk / fx, r.h * kk / fy) ?: img.bmp
+        },
+        release = { img, b -> if (b !== img.bmp) b.recycle() }
+    )
     return bmp
 }
 
