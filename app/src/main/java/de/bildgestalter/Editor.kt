@@ -106,6 +106,15 @@ private val PALETTE = listOf(
     GOLD, SILVER
 )
 
+/** Übersetzte Schriftnamen (Russo One und Serif bleiben, wie sie sind). */
+private fun fontLabel(i: Int, n: String): String = when (i) {
+    2 -> tr(S_TYPEW)
+    3 -> tr(S_HAND)
+    4 -> tr(S_BOLD)
+    5 -> tr(S_ITAL)
+    else -> n
+}
+
 /** Kleiner Verlauf für Farbfelder (Punkte und Icons) in den Einstellungen. */
 private fun swatchBrush(c: Color): Brush = when (glitterKind(c)) {
     1 -> Brush.linearGradient(
@@ -185,6 +194,7 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
 
     val addText: () -> Unit = {
         val t = TxtItem()
+        t.text = tr(S_TEXT)
         val g = textGeom(t)
         val (cw, ch) = canvasSize(state)
         var x = (cw - g.w) / 2f
@@ -206,7 +216,7 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
     val export: () -> Unit = {
         if (!busy) {
             if (state.images.isEmpty() && state.texts.isEmpty()) {
-                Toast.makeText(context, "Bitte zuerst Bilder oder Text hinzufügen.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, tr(S_EMPTY), Toast.LENGTH_SHORT).show()
             } else {
                 busy = true
                 msg = null
@@ -214,8 +224,8 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 scope.launch {
                     val r = exportImage(context, state)
                     busy = false
-                    msg = if (r != null) "Gespeichert als $r in der Galerie (Ordner Bildgestalter)"
-                    else "Export fehlgeschlagen. Versuche eine niedrigere Bildauflösung."
+                    msg = if (r != null) tr(S_SAVED).replace("%s", r)
+                    else tr(S_FAIL)
                 }
             }
         }
@@ -251,11 +261,11 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Bildauflösung", fontSize = 15.sp, color = Color.Black,
+                        tr(S_RES), fontSize = 15.sp, color = Color.Black, maxLines = 2,
                         modifier = Modifier.clickable { showRes = true }.padding(horizontal = 8.dp, vertical = 8.dp)
                     )
                     Text(
-                        "Exportieren", fontSize = 15.sp, color = Color.Black,
+                        tr(S_EXPORT), fontSize = 15.sp, color = Color.Black, maxLines = 2,
                         modifier = Modifier.clickable { export() }.padding(horizontal = 8.dp, vertical = 8.dp)
                     )
                 }
@@ -386,7 +396,7 @@ private fun MessagePill(busy: Boolean, msg: String?) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (busy) {
-            Text("Wird exportiert", color = Color.White, fontSize = 15.sp)
+            Text(tr(S_EXPORTING), color = Color.White, fontSize = 15.sp)
             Spacer(Modifier.width(8.dp))
             BlinkingDots()
         } else if (msg != null) {
@@ -948,52 +958,52 @@ fun TextPanel(t: TxtItem) {
             value = t.text,
             onValueChange = { t.text = it },
             modifier = Modifier.fillMaxWidth(),
-            label = { Text("Text") },
+            label = { Text(tr(S_TEXT)) },
             maxLines = 4
         )
-        Text("Schriftart", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_FONT), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s1).horizontalScroll(s1),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FONT_NAMES.forEachIndexed { i, n -> Chip(n, t.font == i) { t.font = i } }
+            FONT_NAMES.forEachIndexed { i, n -> Chip(fontLabel(i, n), t.font == i) { t.font = i } }
         }
-        Text("Schriftfarbe", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_FCOLOR), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s2).horizontalScroll(s2),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             PALETTE.forEach { c -> ColorDot(c, t.color == c) { t.color = c } }
         }
-        Text("Hintergrundfläche", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_PADAREA), fontSize = 12.sp, color = Color.Black)
         SliderRow({ PadIcon(t.pad) }, t.pad, { t.pad = it })
-        Text("Textfeld-Hintergrund", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_BG), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s3).horizontalScroll(s3),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Chip("Kein", t.bg == null) { t.bg = null }
+            Chip(tr(S_NONE), t.bg == null) { t.bg = null }
             PALETTE.forEach { c -> ColorDot(c, t.bg == c) { t.bg = c } }
         }
-        Text("Abgerundete Ecken", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_CORNERS), fontSize = 12.sp, color = Color.Black)
         SliderRow({ CornerIcon(t.corner) }, t.corner, { t.corner = it })
-        Text("Ausrichtung", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_ALIGN), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s4).horizontalScroll(s4),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Chip("Linksbündig", t.align == 0) { t.align = 0 }
-            Chip("Mittig", t.align == 1) { t.align = 1 }
-            Chip("Rechtsbündig", t.align == 2) { t.align = 2 }
+            Chip(tr(S_LEFT), t.align == 0) { t.align = 0 }
+            Chip(tr(S_CENTER), t.align == 1) { t.align = 1 }
+            Chip(tr(S_RIGHT), t.align == 2) { t.align = 2 }
         }
-        Text("Transparenz", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_TRANSP), fontSize = 12.sp, color = Color.Black)
         SliderRow({ TransparencyIcon(t.transp) }, t.transp, { t.transp = it })
-        Text("Zeilenabstand", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_LINESP), fontSize = 12.sp, color = Color.Black)
         SliderRow({ DoubleArrowIcon(true) }, t.lineSp, { t.lineSp = it })
-        Text("Buchstabenabstand", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_LETSP), fontSize = 12.sp, color = Color.Black)
         SliderRow({ DoubleArrowIcon(false) }, t.letterSp, { t.letterSp = it })
-        Text("Zeilenkrümmung", fontSize = 12.sp, color = Color.Black)
+        Text(tr(S_CURVE), fontSize = 12.sp, color = Color.Black)
         SliderRow({ CurveIcon(t.curve) }, t.curve, { t.curve = it }, -100, 100)
     }
 }
@@ -1157,8 +1167,13 @@ fun ResolutionDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Uni
             ) {
                 QUALITY_NAMES.forEachIndexed { i, n ->
                     val sel = i == current
+                    val label = when (i) {
+                        1 -> tr(S_AVG)
+                        2 -> tr(S_ECO)
+                        else -> n
+                    }
                     Text(
-                        n,
+                        label,
                         fontSize = 24.sp,
                         fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
                         color = if (sel) Color.Black else Grau,
@@ -1177,6 +1192,8 @@ fun ResolutionDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Uni
 @Composable
 fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
+    // Lange Wörter werden etwas verkleinert, damit sie in den Button passen
+    val fs = if (label.length > 8) max(9f, size * 8f / label.length) else size.toFloat()
     Box(
         modifier
             .height(64.dp)
@@ -1188,7 +1205,7 @@ fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit)
     ) {
         Text(
             text = label,
-            fontSize = size.sp,
+            fontSize = fs.sp,
             color = Color.Black,
             fontFamily = RussoFamily,
             maxLines = 1,
@@ -1253,7 +1270,7 @@ fun BottomBar(onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         BarButton("+", 34, Modifier.weight(1f), onAdd)
-        BarButton("Rahmen", 14, Modifier.weight(1f), onFrame)
-        BarButton("Text", 22, Modifier.weight(1f), onText)
+        BarButton(tr(S_FRAME), 14, Modifier.weight(1f), onFrame)
+        BarButton(tr(S_TEXT), 22, Modifier.weight(1f), onText)
     }
 }
