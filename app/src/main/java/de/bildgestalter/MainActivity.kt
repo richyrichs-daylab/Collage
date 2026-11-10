@@ -22,6 +22,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -35,9 +36,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -46,6 +49,8 @@ val RussoFamily = FontFamily(Font(R.font.russo_one))
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Sprache der App (Systemsprache oder "Sprache pro App" ab Android 13)
+        Lang.setup(resources.configuration.locales)
         russoTypeface = try {
             resources.getFont(R.font.russo_one)
         } catch (e: Throwable) {
@@ -85,7 +90,10 @@ fun AppTheme(content: @Composable () -> Unit) {
         ),
         typography = typo
     ) {
-        ProvideTextStyle(TextStyle(fontFamily = f, color = Color.Black), content)
+        // Anordnung der Oberfläche bleibt in allen Sprachen gleich (links nach rechts)
+        CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+            ProvideTextStyle(TextStyle(fontFamily = f, color = Color.Black), content)
+        }
     }
 }
 
@@ -124,13 +132,13 @@ fun App() {
     if (confirmBack) {
         AlertDialog(
             onDismissRequest = { confirmBack = false },
-            title = { Text("Zur Startseite?") },
-            text = { Text("Nicht exportierte Änderungen gehen verloren.") },
+            title = { Text(tr(S_HOMEQ)) },
+            text = { Text(tr(S_LOSE)) },
             confirmButton = {
-                TextButton(onClick = { confirmBack = false; editor = null }) { Text("Ja") }
+                TextButton(onClick = { confirmBack = false; editor = null }) { Text(tr(S_YES)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmBack = false }) { Text("Abbrechen") }
+                TextButton(onClick = { confirmBack = false }) { Text(tr(S_CANCEL)) }
             }
         )
     }
@@ -198,6 +206,8 @@ private fun DrawScope.drawHomeBackground() {
 
 @Composable
 fun HomeButton(text: String, tint: Color, onClick: () -> Unit) {
+    // Lange Wörter werden verkleinert, damit sie auf den Bildschirm passen
+    val fs = if (text.length > 9) (56f * 9f / text.length).coerceAtLeast(26f) else 56f
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(14.dp))
@@ -207,7 +217,7 @@ fun HomeButton(text: String, tint: Color, onClick: () -> Unit) {
     ) {
         Text(
             text = text,
-            fontSize = 56.sp,
+            fontSize = fs.sp,
             color = Color.Black,
             fontFamily = RussoFamily,
             maxLines = 1,
@@ -227,9 +237,9 @@ fun HomeScreen(onFreistil: () -> Unit, onCollage: () -> Unit, onReihe: () -> Uni
             verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            HomeButton("Freistil", Color(0xFFFF8A65), onFreistil)
-            HomeButton("Collage", Color(0xFF7C4DFF), onCollage)
-            HomeButton("Reihe", Color(0xFF64B5F6), onReihe)
+            HomeButton(tr(S_FREE), Color(0xFFFF8A65), onFreistil)
+            HomeButton(tr(S_COLL), Color(0xFF7C4DFF), onCollage)
+            HomeButton(tr(S_ROW), Color(0xFF64B5F6), onReihe)
         }
     }
 }
