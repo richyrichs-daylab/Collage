@@ -58,7 +58,7 @@ object Lang {
     /** Nimmt die erste Sprache der Liste, die die App kennt. Sonst Englisch. */
     fun setup(list: LocaleList) {
         for (i in 0 until list.size()) {
-            val c = resolve(list.get(i))
+              val c = resolveX(list.get(i))
             if (DATA.containsKey(c)) {
                 code = c
                 return
