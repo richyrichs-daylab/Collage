@@ -3,6 +3,13 @@
     <locale android:name="en" />
     <locale android:name="en-AU" />
     <locale android:name="en-CA" />
+    <locale android:name="en-GB" />
+    <locale android:name="en-IN" />
+    <locale android:name="en-IE" />
+    <locale android:name="en-NZ" />
+    <locale android:name="en-SG" />
+    <locale android:name="en-ZA" />
+    <locale android:name="en-US" />
     <locale android:name="de" />
     <locale android:name="de-DE" />
     <locale android:name="de-AT" />
@@ -16,6 +23,10 @@
     <locale android:name="hi" />
     <locale android:name="es" />
     <locale android:name="fr" />
+    <locale android:name="fr-BE" />
+    <locale android:name="fr-CA" />
+    <locale android:name="fr-FR" />
+    <locale android:name="fr-CH" />
     <locale android:name="ar" />
     <locale android:name="ar-DZ" />
     <locale android:name="ar-BH" />
@@ -56,6 +67,8 @@
     <locale android:name="sw" />
     <locale android:name="jv" />
     <locale android:name="it" />
+    <locale android:name="it-IT" />
+    <locale android:name="it-CH" />
     <locale android:name="wuu" />
     <locale android:name="kn" />
     <locale android:name="gu" />
@@ -117,4 +130,20 @@
     <locale android:name="my" />
     <locale android:name="ceb" />
     <locale android:name="chr" />
+    <locale android:name="eo" />
+    <locale android:name="ee" />
+    <locale android:name="ewo" />
+    <locale android:name="ff" />
+    <locale android:name="gl" />
+    <locale android:name="haw" />
+    <locale android:name="he" />
+    <locale android:name="yi" />
+    <locale android:name="kl" />
+    <locale android:name="km" />
+    <locale android:name="kk" />
+    <locale android:name="ks" />
+    <locale android:name="ca" />
+    <locale android:name="rw" />
+    <locale android:name="ky" />
+    <locale android:name="kok" />
 </locale-config>
