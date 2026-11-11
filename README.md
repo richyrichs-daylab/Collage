@@ -21,7 +21,7 @@
 [![Contributors](https://img.shields.io/github/contributors/richyrichs-daylab/collage?style=for-the-badge&logo=github&logoColor=white&color=8E24AA&labelColor=555555)](https://github.com/richyrichs-daylab/collage/graphs/contributors)
 [![Views](https://hits.sh/github.com/richyrichs-daylab/collage.svg?style=for-the-badge&label=VIEWS&color=5B8C7A&labelColor=555555)](https://github.com/richyrichs-daylab/collage)
 
-<h3 align="center">"the only one I know</h3>
+<h3 align="center">"the only one I know"</h3>
 
 ### Core Functions
 * **freestyle**
