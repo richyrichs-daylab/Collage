@@ -21,4 +21,4 @@ private fun fix(s: String): String {
 }
 
 /** Alle Sprachen (Grundstock aus Strings.kt plus Zusatzsprachen), jede Zeile mit genau 35 Feldern. */
-  val DATA: Map<String, String> = (BASE_DATA + EXTRA + MORE + MORE2).mapValues { fix(it.value) }
+  val DATA: Map<String, String> = (BASE_DATA + EXTRA + MORE + MORE2 + MORE3).mapValues { fix(it.value) }
