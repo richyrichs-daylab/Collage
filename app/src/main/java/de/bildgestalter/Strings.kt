@@ -99,7 +99,7 @@ object Lang {
     }
 }
 
-private val DATA: Map<String, String> = mapOf(
+val BASE_DATA: Map<String, String> = mapOf(
     "en" to "Freestyle|Collage|Row|Go to home screen?|Unexported changes will be lost.|Yes|Cancel|Add images or text first.|Exporting|Saved to gallery (%s)|Export failed. Try a lower resolution.|Resolution|Export|Frame|Text|Medium|Economy|Font|Font color|Background area|Text box background|None|Rounded corners|Alignment|Left|Center|Right|Transparency|Line spacing|Letter spacing|Line curve|Typewriter|Handwriting|Bold|Italic",
     "de" to "Freistil|Collage|Reihe|Zur Startseite?|Nicht exportierte Änderungen gehen verloren.|Ja|Abbrechen|Bitte zuerst Bilder oder Text hinzufügen.|Wird exportiert|Gespeichert in der Galerie (%s)|Export fehlgeschlagen. Versuche eine niedrigere Bildauflösung.|Bildauflösung|Exportieren|Rahmen|Text|durchschnittlich|sparsam|Schriftart|Schriftfarbe|Hintergrundfläche|Textfeld-Hintergrund|Kein|Abgerundete Ecken|Ausrichtung|Linksbündig|Mittig|Rechtsbündig|Transparenz|Zeilenabstand|Buchstabenabstand|Zeilenkrümmung|Schreibmaschine|Handschrift|Fett|Kursiv",
     "zh" to "自由|拼贴|排列|返回主页？|未导出的更改将丢失。|是|取消|请先添加图片或文字。|正在导出|已保存到相册（%s）|导出失败。请尝试较低的分辨率。|分辨率|导出|边框|文字|中等|节省|字体|字体颜色|背景区域|文本框背景|无|圆角|对齐|左对齐|居中|右对齐|透明度|行距|字距|行弯曲|打字机|手写|粗体|斜体",
