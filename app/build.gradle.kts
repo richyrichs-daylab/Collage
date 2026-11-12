@@ -57,4 +57,5 @@ dependencies {
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.0")
+    testImplementation("junit:junit:4.13.2")
 }
