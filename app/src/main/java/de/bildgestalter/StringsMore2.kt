@@ -2,16 +2,7 @@ package de.bildgestalter
 
 import java.util.Locale
 
-// Weitere Sprachen. Jede Zeile hat bis zu 35 Felder, getrennt durch "|".
-// Leere Felder zeigen automatisch Englisch.
-
-// Baut eine Zeile aus einzelnen Feldern (Nummer zu Text). Nicht genannte Felder bleiben leer.
-private fun sparse(vararg p: Pair<Int, String>): String {
-    val a = Array(S_COUNT) { "" }
-    for ((i, s) in p) if (i in 0 until S_COUNT) a[i] = s
-    return a.joinToString("|")
-}
-
+// Weitere Sprachen. Jede Zeile hat genau 35 Felder, getrennt durch "|".
 val MORE2: Map<String, String> = mapOf(
     "ms" to "Bebas|Kolaj|Baris|Kembali ke skrin utama?|Perubahan yang belum dieksport akan hilang.|Ya|Batal|Tambah imej atau teks dahulu.|Mengeksport|Disimpan dalam galeri (%s)|Eksport gagal. Cuba resolusi yang lebih rendah.|Resolusi|Eksport|Bingkai|Teks|Sederhana|Jimat|Fon|Warna fon|Kawasan latar belakang|Latar belakang kotak teks|Tiada|Sudut bulat|Penjajaran|Kiri|Tengah|Kanan|Ketelusan|Jarak baris|Jarak huruf|Lengkung baris|Mesin taip|Tulisan tangan|Tebal|Condong",
     "mt" to "Ħieles|Kollaġ|Ringiela|Terġa' lura għall-bidu?|Il-bidliet mhux esportati se jintilfu.|Iva|Ikkanċella|Żid l-ewwel immaġini jew test.|Qed jiġi esportat|Salvat fil-gallerija (%s)|L-esportazzjoni falliet. Ipprova riżoluzzjoni aktar baxxa.|Riżoluzzjoni|Esporta|Qafas|Test|Medja|Ekonomika|Font|Kulur tal-font|Żona tal-isfond|Isfond tal-kaxxa tat-test|L-ebda|Kantunieri tondi|Allinjament|Xellug|Nofs|Lemin|Trasparenza|Spazju bejn il-linji|Spazju bejn l-ittri|Kurvatura tal-linja|Magna tal-kitba|Kitba bl-id|Grassett|Korsiv",
@@ -24,5 +15,28 @@ val MORE2: Map<String, String> = mapOf(
     "sr-Latn" to "Slobodno|Kolaž|Red|Povratak na početni ekran?|Neizvezene promene biće izgubljene.|Da|Otkaži|Prvo dodajte slike ili tekst.|Izvoz u toku|Sačuvano u galeriji (%s)|Izvoz nije uspeo. Pokušajte sa nižom rezolucijom.|Rezolucija|Izvezi|Okvir|Tekst|Srednja|Štedljiva|Font|Boja fonta|Oblast pozadine|Pozadina tekstualnog okvira|Nema|Zaobljeni uglovi|Poravnanje|Levo|Centar|Desno|Providnost|Razmak redova|Razmak slova|Zakrivljenost reda|Pisaća mašina|Rukopis|Podebljano|Kurziv",
     "pt-PT" to "Livre|Colagem|Fila|Voltar ao ecrã principal?|As alterações não exportadas serão perdidas.|Sim|Cancelar|Adicione primeiro imagens ou texto.|A exportar|Guardado na galeria (%s)|Falha ao exportar. Tente uma resolução inferior.|Resolução|Exportar|Moldura|Texto|Média|Económica|Tipo de letra|Cor do tipo de letra|Área de fundo|Fundo da caixa de texto|Nenhum|Cantos arredondados|Alinhamento|Esquerda|Centro|Direita|Transparência|Espaçamento entre linhas|Espaçamento entre letras|Curvatura da linha|Máquina de escrever|Manuscrito|Negrito|Itálico",
     "nn" to "Fri|Kollasj|Rad|Gå til startsida?|Ueksporterte endringar går tapt.|Ja|Avbryt|Legg først til bilete eller tekst.|Eksporterer|Lagra i galleriet (%s)|Eksporten mislukkast. Prøv ei lågare oppløysing.|Oppløysing|Eksporter|Ramme|Tekst|Middels|Sparsam|Skrifttype|Skriftfarge|Bakgrunnsområde|Bakgrunnen til tekstboksen|Ingen|Avrunda hjørne|Justering|Venstre|Midtstilt|Høgre|Gjennomsiktigheit|Linjeavstand|Bokstavavstand|Linjekrumming|Skrivemaskin|Handskrift|Feit|Kursiv",
-    "mi" to "Kore here|Kōtuitui|Rārangi|Hoki ki te kāinga?|Ka ngaro ngā huringa kāore anō kia kaweake.|Āe|Whakakore|Tāpirihia ētahi whakaahua, tuhinga rānei i te tuatahi.|E kaweake ana|Kua penapenahia ki te taiwhanga (%s)|I rahua te kaweake. Whakamātauria he whakatau iti ake.|Whakataunga|Kaweake|Anga|Tuhinga|Waenga|Ōhanga|Momotuhi|Tae momotuhi|Wāhi papamuri|Papamuri pouaka tuhinga|Kāore|Kokonga porotaka|Whakahāngai|Mauī|Waenganui|Matau||Tawhiti rārangi|Tawhiti pū|Kōpikopiko rārangi|Mīhini taipa|Tuhi ā-ringa|Mātotoru|Tītaha",
-    "sm" to
+    "sm" to "Saoloto|Tuufaatasiga|Laina|Toe foi i le fale?|O suiga e lei auina atu o le a leiloa.|Ioe|Faaleaogaina|Fai muamua se faaopoopoga o ata po o tusitusiga.|O loo auina atu|Ua sefe i le fale ata (%s)|Sa lē manuia le auina atu. Taumafai i se fofō maualalo.|Fofō|Auina atu|Faavaa|Tusitusiga|Ogatotonu|Faasaoina|Ituaiga mataitusi|Lanu o mataitusi|Vaega o le talaaga|Talaaga o le pusa tusitusiga|Leai|Tulimanu faataamilo|Faatulagaina|Agavale|Ogatotonu|Agatonu|Manino|Va o laina|Va o mataitusi|Faataamilo o laina|Masini lomitusi|Tusi lima|Matuā|Faasaga",
+    "sa" to "स्वतन्त्रम्|कोलाजः|पङ्क्तिः|मुखपृष्ठं प्रति पुनः गच्छामः?|अनिर्यातिताः परिवर्तनाः नश्यन्ति।|आम्|निरस्यताम्|प्रथमं चित्राणि पाठं वा योजयतु।|निर्यात्यते|चित्रसङ्ग्रहे सुरक्षितम् (%s)|निर्यातः असफलः। न्यूनं विभेदनं प्रयतताम्।|विभेदनम्|निर्यातयतु|चौकटम्|पाठः|मध्यमम्|मितव्ययम्|अक्षररूपम्|अक्षरवर्णः|पृष्ठभूमिक्षेत्रम्|पाठपेटिकायाः पृष्ठभूमिः|किमपि न|वृत्ताकाराः कोणाः|संरेखणम्|वामम्|मध्यम्|दक्षिणम्|पारदर्शिता|पङ्क्त्यन्तरम्|अक्षरान्तरम्|पङ्क्तिवक्रता|टङ्कनयन्त्रम्|हस्ताक्षरम्|स्थूलम्|तिर्यक्",
+    "mg" to "Malalaka|Kolazy|Andalana|Hiverina any amin'ny fandraisana?|Ho very ny fanovana tsy mbola nalefa.|Eny|Foano|Ampio sary na lahatsoratra aloha.|Eo am-pandefasana|Voatahiry ao amin'ny galeria (%s)|Tsy nahomby ny fandefasana. Andramo ny famaritana ambany kokoa.|Famaritana|Alefaso|Rafitra|Lahatsoratra|Salanisa|Ara-toekarena|Karazan-tsoratra|Loko ny soratra|Faritra aoriana|Aoriana ny boaty lahatsoratra|Tsy misy|Zoro boribory|Fampifandanjana|Havia|Afovoany|Havanana|Fahitana|Elanelana ny andalana|Elanelana ny litera|Fiolahan'ny andalana|Milina fanoratana|Soratra an-tanana|Matevina|Mitongilana"
+)
+
+/** Wählt den Sprachschlüssel zu einer Gerätesprache (mit Region und Schrift). */
+fun resolveX(l: Locale): String {
+    val lang = when (val c = l.language) {
+        "in" -> "id"
+        "tl" -> "fil"
+        "nb" -> "no"
+        else -> c
+    }
+    return when (lang) {
+        "zh" -> if (l.script == "Hant" || l.country == "TW" || l.country == "HK" || l.country == "MO") "zh-Hant" else "zh"
+        "ar" -> when (l.country) {
+            "EG" -> "arz"
+            "MA" -> "ary"
+            else -> "ar"
+        }
+        "sr" -> if (l.script == "Latn") "sr-Latn" else "sr"
+        "pt" -> if (l.country in setOf("PT", "AO", "MZ", "CV", "GW", "ST", "TL")) "pt-PT" else "pt"
+        else -> lang
+    }
+}
