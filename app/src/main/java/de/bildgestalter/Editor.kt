@@ -33,11 +33,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -49,6 +51,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,8 +81,21 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -105,6 +121,9 @@ private val PALETTE = listOf(
     Color(0xFF8E24AA), Color(0xFFEC407A), Color(0xFF757575), Color(0xFF6D4C41),
     GOLD, SILVER
 )
+
+/** Farbname für TalkBack (Reihenfolge wie in PALETTE). */
+private fun colorName(c: Color): String = ta(A_COLOR0 + PALETTE.indexOf(c).coerceAtLeast(0))
 
 /** Übersetzte Schriftnamen (Russo One und Serif bleiben, wie sie sind). */
 private fun fontLabel(i: Int, n: String): String = when (i) {
@@ -257,16 +276,23 @@ fun EditorScreen(state: EditorState, onBack: () -> Unit) {
             ) {
                 Text(
                     "←", fontSize = 30.sp, color = Color.Black,
-                    modifier = Modifier.clickable { onBack() }.padding(horizontal = 12.dp, vertical = 4.dp)
+                    modifier = Modifier
+                        .clickable(role = Role.Button) { onBack() }
+                        .semantics { contentDescription = ta(A_BACK) }
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         tr(S_RES), fontSize = 15.sp, color = Color.Black, maxLines = 2,
-                        modifier = Modifier.clickable { showRes = true }.padding(horizontal = 8.dp, vertical = 8.dp)
+                        modifier = Modifier
+                            .clickable(role = Role.Button) { showRes = true }
+                            .padding(horizontal = 8.dp, vertical = 8.dp)
                     )
                     Text(
                         tr(S_EXPORT), fontSize = 15.sp, color = Color.Black, maxLines = 2,
-                        modifier = Modifier.clickable { export() }.padding(horizontal = 8.dp, vertical = 8.dp)
+                        modifier = Modifier
+                            .clickable(role = Role.Button) { export() }
+                            .padding(horizontal = 8.dp, vertical = 8.dp)
                     )
                 }
             }
@@ -392,7 +418,8 @@ private fun MessagePill(busy: Boolean, msg: String?) {
         Modifier
             .clip(RoundedCornerShape(22.dp))
             .background(Color(0xE6303030))
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 12.dp)
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite },
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (busy) {
@@ -414,6 +441,7 @@ private class ViewInfo(val scale: Float, val ox: Float, val oy: Float)
  * boxW, boxH: Größe des Containers (in Pixeln).
  * Alles wird in einem Zug gezeichnet: erst die Szene (wie im Export), dann die
  * graue Schicht außerhalb des Feldes, dann Auswahlrahmen und Eckkreise.
+ * Über der Zeichnung liegen unsichtbare Beschreibungsknoten für TalkBack (nur Textfelder).
  */
 @Composable
 fun Stage(
@@ -428,29 +456,83 @@ fun Stage(
         android.graphics.Paint().apply { color = android.graphics.Color.argb(128, 200, 200, 200) }
     }
 
-    Canvas(
-        Modifier
-            .size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })
-            .pointerInput(state) { stageGestures(state, view, hitR) }
-    ) {
-        val nc = drawContext.canvas.nativeCanvas
-        val fx = ox.toFloat()
-        val fy = oy.toFloat()
+    Box(Modifier.size(with(density) { boxW.toDp() }, with(density) { boxH.toDp() })) {
+        Canvas(
+            Modifier
+                .fillMaxSize()
+                .pointerInput(state) { stageGestures(state, view, hitR) }
+        ) {
+            val nc = drawContext.canvas.nativeCanvas
+            val fx = ox.toFloat()
+            val fy = oy.toFloat()
 
-        nc.save()
-        nc.translate(fx, fy)
-        nc.scale(scale, scale)
-        drawScene(nc, state, { img, _ -> img.bmp }, { _, _ -> })
-        nc.restore()
+            nc.save()
+            nc.translate(fx, fy)
+            nc.scale(scale, scale)
+            drawScene(nc, state, { img, _ -> img.bmp }, { _, _ -> })
+            nc.restore()
 
-        // Alles außerhalb des weißen Feldes: 50 % graue Schicht
-        nc.save()
-        nc.clipOutRect(fx, fy, fx + cw * scale, fy + ch * scale)
-        nc.drawRect(0f, 0f, size.width, size.height, dimPaint)
-        nc.restore()
+            // Alles außerhalb des weißen Feldes: 50 % graue Schicht
+            nc.save()
+            nc.clipOutRect(fx, fy, fx + cw * scale, fy + ch * scale)
+            nc.drawRect(0f, 0f, size.width, size.height, dimPaint)
+            nc.restore()
 
-        drawSelection(nc, state, fx, fy, scale, dp)
+            drawSelection(nc, state, fx, fy, scale, dp)
+        }
+        state.texts.forEach { t ->
+            key(t) { TextA11y(state, t, ox, oy, scale) }
+        }
     }
+}
+
+private fun wrapDeg(r: Float): Float = ((r % 360f) + 540f) % 360f - 180f
+
+/**
+ * Unsichtbarer Knoten über einem Textfeld: TalkBack liest "Text: <Inhalt>" und bietet
+ * Aktionen zum Löschen, Vergrößern, Verkleinern, Drehen und Verschieben an.
+ */
+@Composable
+private fun TextA11y(state: EditorState, t: TxtItem, ox: Int, oy: Int, scale: Float) {
+    val density = LocalDensity.current
+    val f = frameOf(state, t) ?: return
+    val left = ox + (f.cx + f.hx0 - f.w / 2f) * scale
+    val top = oy + (f.cy + f.hy0 - f.h / 2f) * scale
+    val wPx = max(1f, (f.hx1 - f.hx0) * scale)
+    val hPx = max(1f, (f.hy1 - f.hy0) * scale)
+    val isSel = state.selected === t
+    val label = tr(S_TEXT) + ": " + t.text
+    val step = 40f
+
+    fun mv(dx: Float, dy: Float): Boolean {
+        t.x += dx
+        t.y += dy
+        clampTexts(state)
+        return true
+    }
+
+    Box(
+        Modifier
+            .offset { IntOffset(left.roundToInt(), top.roundToInt()) }
+            .size(with(density) { wPx.toDp() }, with(density) { hPx.toDp() })
+            .semantics {
+                contentDescription = label
+                this.selected = isSel
+                role = Role.Button
+                onClick { state.select(t); true }
+                customActions = listOf(
+                    CustomAccessibilityAction(ta(A_DELETE)) { deleteItem(state, t); true },
+                    CustomAccessibilityAction(ta(A_BIGGER)) { t.fs = t.fs * 1.1f; true },
+                    CustomAccessibilityAction(ta(A_SMALLER)) { t.fs = max(12f, t.fs * 0.9f); true },
+                    CustomAccessibilityAction(ta(A_ROT_L)) { t.rot = wrapDeg(t.rot - 15f); true },
+                    CustomAccessibilityAction(ta(A_ROT_R)) { t.rot = wrapDeg(t.rot + 15f); true },
+                    CustomAccessibilityAction(ta(A_UP)) { mv(0f, -step) },
+                    CustomAccessibilityAction(ta(A_DOWN)) { mv(0f, step) },
+                    CustomAccessibilityAction(ta(A_LEFT)) { mv(-step, 0f) },
+                    CustomAccessibilityAction(ta(A_RIGHT)) { mv(step, 0f) }
+                )
+            }
+    )
 }
 
 private fun nPaint() = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
@@ -733,7 +815,7 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
             .clip(shape)
             .background(if (selected) Color(0xFFB5ECF2) else Color.White)
             .border(1.dp, if (selected) Teal else Color(0xFFAAAAAA), shape)
-            .clickable { onClick() }
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Text(text, fontSize = 14.sp, color = Color.Black)
@@ -742,6 +824,7 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
+    val name = colorName(color)
     Box(
         Modifier
             .size(34.dp)
@@ -752,7 +835,8 @@ fun ColorDot(color: Color, selected: Boolean, onClick: () -> Unit) {
                 if (selected) Teal else Color(0xFF888888),
                 CircleShape
             )
-            .clickable { onClick() }
+            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+            .semantics { contentDescription = name }
     )
 }
 
@@ -906,7 +990,7 @@ private fun CurveIcon(percent: Int) {
 
 @Composable
 private fun FrameSlider(
-    value: Int, onChange: (Int) -> Unit, modifier: Modifier,
+    label: String, value: Int, onChange: (Int) -> Unit, modifier: Modifier,
     lo: Int = 0, hi: Int = 100
 ) {
     Slider(
@@ -914,7 +998,10 @@ private fun FrameSlider(
         onValueChange = { onChange(it.roundToInt()) },
         valueRange = lo.toFloat()..hi.toFloat(),
         steps = hi - lo - 1,
-        modifier = modifier,
+        modifier = modifier.semantics {
+            contentDescription = label
+            stateDescription = "$value %"
+        },
         colors = SliderDefaults.colors(
             thumbColor = Teal,
             activeTrackColor = Teal,
@@ -927,13 +1014,14 @@ private fun FrameSlider(
 
 @Composable
 private fun SliderRow(
+    label: String,
     icon: @Composable () -> Unit,
     value: Int, onChange: (Int) -> Unit,
     lo: Int = 0, hi: Int = 100
 ) {
     Row(Modifier.fillMaxWidth().height(44.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { icon() }
-        FrameSlider(value, onChange, Modifier.weight(1f), lo, hi)
+        FrameSlider(label, value, onChange, Modifier.weight(1f), lo, hi)
     }
 }
 
@@ -976,7 +1064,7 @@ fun TextPanel(t: TxtItem) {
             PALETTE.forEach { c -> ColorDot(c, t.color == c) { t.color = c } }
         }
         Text(tr(S_PADAREA), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ PadIcon(t.pad) }, t.pad, { t.pad = it })
+        SliderRow(tr(S_PADAREA), { PadIcon(t.pad) }, t.pad, { t.pad = it })
         Text(tr(S_BG), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s3).horizontalScroll(s3),
@@ -987,7 +1075,7 @@ fun TextPanel(t: TxtItem) {
             PALETTE.forEach { c -> ColorDot(c, t.bg == c) { t.bg = c } }
         }
         Text(tr(S_CORNERS), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ CornerIcon(t.corner) }, t.corner, { t.corner = it })
+        SliderRow(tr(S_CORNERS), { CornerIcon(t.corner) }, t.corner, { t.corner = it })
         Text(tr(S_ALIGN), fontSize = 12.sp, color = Color.Black)
         Row(
             Modifier.fillMaxWidth().fadingEdges(s4).horizontalScroll(s4),
@@ -998,13 +1086,13 @@ fun TextPanel(t: TxtItem) {
             Chip(tr(S_RIGHT), t.align == 2) { t.align = 2 }
         }
         Text(tr(S_TRANSP), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ TransparencyIcon(t.transp) }, t.transp, { t.transp = it })
+        SliderRow(tr(S_TRANSP), { TransparencyIcon(t.transp) }, t.transp, { t.transp = it })
         Text(tr(S_LINESP), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ DoubleArrowIcon(true) }, t.lineSp, { t.lineSp = it })
+        SliderRow(tr(S_LINESP), { DoubleArrowIcon(true) }, t.lineSp, { t.lineSp = it })
         Text(tr(S_LETSP), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ DoubleArrowIcon(false) }, t.letterSp, { t.letterSp = it })
+        SliderRow(tr(S_LETSP), { DoubleArrowIcon(false) }, t.letterSp, { t.letterSp = it })
         Text(tr(S_CURVE), fontSize = 12.sp, color = Color.Black)
-        SliderRow({ CurveIcon(t.curve) }, t.curve, { t.curve = it }, -100, 100)
+        SliderRow(tr(S_CURVE), { CurveIcon(t.curve) }, t.curve, { t.curve = it }, -100, 100)
     }
 }
 
@@ -1014,8 +1102,14 @@ fun TextPanel(t: TxtItem) {
 private fun FormatRow(state: EditorState) {
     val idx = state.ratioIdx.coerceIn(0, RATIOS.size - 1)
     val sc = rememberScrollState()
+    val fmtDesc = ta(A_FORMAT) + " " + RATIOS[idx].label
     Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) {
+        Box(
+            Modifier
+                .width(44.dp)
+                .clearAndSetSemantics { contentDescription = fmtDesc },
+            contentAlignment = Alignment.CenterStart
+        ) {
             Text(
                 RATIOS[idx].label,
                 fontSize = 13.sp,
@@ -1038,10 +1132,14 @@ private fun FormatRow(state: EditorState) {
                     maxLines = 1,
                     softWrap = false,
                     modifier = Modifier
-                        .clickable {
-                            state.ratioIdx = i
-                            clampTexts(state)
-                        }
+                        .selectable(
+                            selected = i == idx,
+                            role = Role.RadioButton,
+                            onClick = {
+                                state.ratioIdx = i
+                                clampTexts(state)
+                            }
+                        )
                         .padding(horizontal = 4.dp, vertical = 12.dp)
                 )
             }
@@ -1071,6 +1169,7 @@ private fun RasterRow(state: EditorState) {
     ) {
         opts.forEachIndexed { i, o ->
             val cells = collageCells(o, tw, th, 4f)
+            val desc = ta(A_LAYOUT) + " " + (i + 1)
             Canvas(
                 Modifier
                     .size(40.dp)
@@ -1079,7 +1178,12 @@ private fun RasterRow(state: EditorState) {
                     .then(
                         if (i == cur) Modifier.border(2.dp, Teal, RoundedCornerShape(5.dp)) else Modifier
                     )
-                    .clickable { state.collageIdx = i }
+                    .selectable(
+                        selected = i == cur,
+                        role = Role.RadioButton,
+                        onClick = { state.collageIdx = i }
+                    )
+                    .semantics { contentDescription = desc }
             ) {
                 val k = size.width / 100f
                 val offX = (100f - tw) / 2f * k
@@ -1119,11 +1223,11 @@ fun FramePanel(state: EditorState) {
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ThicknessIcon(state.gap) }
-            FrameSlider(state.gap, { state.gap = it }, Modifier.weight(1f))
+            FrameSlider(ta(A_THICK), state.gap, { state.gap = it }, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { RoundnessIcon(state.rundung) }
-            FrameSlider(state.rundung, { state.rundung = it }, Modifier.weight(1f))
+            FrameSlider(tr(S_CORNERS), state.rundung, { state.rundung = it }, Modifier.weight(1f))
         }
         Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.width(44.dp), contentAlignment = Alignment.CenterStart) { ColorSquareIcon(state.frameColor) }
@@ -1155,7 +1259,8 @@ fun ResolutionDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Uni
                 color = Color.Black,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .clickable { onDismiss() }
+                    .clickable(role = Role.Button) { onDismiss() }
+                    .semantics { contentDescription = ta(A_BACK) }
                     .padding(horizontal = 18.dp, vertical = 10.dp)
             )
             Column(
@@ -1178,7 +1283,11 @@ fun ResolutionDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Uni
                         fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal,
                         color = if (sel) Color.Black else Grau,
                         modifier = Modifier
-                            .clickable { onSelect(i) }
+                            .selectable(
+                                selected = sel,
+                                role = Role.RadioButton,
+                                onClick = { onSelect(i) }
+                            )
                             .padding(horizontal = 20.dp, vertical = 6.dp)
                     )
                 }
@@ -1190,7 +1299,7 @@ fun ResolutionDialog(current: Int, onSelect: (Int) -> Unit, onDismiss: () -> Uni
 /* ---------- Untere Leiste ---------- */
 
 @Composable
-fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit) {
+fun BarButton(label: String, size: Int, desc: String, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(22.dp)
     // Lange Wörter werden etwas verkleinert, damit sie in den Button passen
     val fs = if (label.length > 8) max(9f, size * 8f / label.length) else size.toFloat()
@@ -1200,7 +1309,8 @@ fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit)
             .clip(shape)
             .background(Color.White.copy(alpha = 0.55f))
             .border(4.dp, Color.White, shape)
-            .clickable { onClick() },
+            .clickable(role = Role.Button) { onClick() }
+            .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -1209,7 +1319,8 @@ fun BarButton(label: String, size: Int, modifier: Modifier, onClick: () -> Unit)
             color = Color.Black,
             fontFamily = RussoFamily,
             maxLines = 1,
-            softWrap = false
+            softWrap = false,
+            modifier = Modifier.clearAndSetSemantics { }
         )
     }
 }
@@ -1224,21 +1335,23 @@ fun Pip(on: Boolean) {
     )
 }
 
-/** Der Format-Button der Reihe (vertikal/horizontal), jetzt im Rahmen-Feld. */
+/** Der Format-Button der Reihe (vertikal/horizontal), im Rahmen-Feld. */
 @Composable
 fun FormatButton(state: EditorState, modifier: Modifier) {
     val shape = RoundedCornerShape(22.dp)
     val v = state.vertical
+    val desc = if (v) ta(A_VERT) else ta(A_HORIZ)
     Box(
         modifier
             .height(64.dp)
             .clip(shape)
             .background(Color.White.copy(alpha = 0.55f))
             .border(4.dp, Color.White, shape)
-            .clickable {
+            .clickable(role = Role.Button) {
                 state.vertical = !state.vertical
                 clampTexts(state)
-            },
+            }
+            .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -1269,8 +1382,8 @@ fun BottomBar(onAdd: () -> Unit, onText: () -> Unit, onFrame: () -> Unit) {
             .padding(10.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        BarButton("+", 34, Modifier.weight(1f), onAdd)
-        BarButton(tr(S_FRAME), 14, Modifier.weight(1f), onFrame)
-        BarButton(tr(S_TEXT), 22, Modifier.weight(1f), onText)
+        BarButton("+", 34, ta(A_ADD), Modifier.weight(1f), onAdd)
+        BarButton(tr(S_FRAME), 14, tr(S_FRAME), Modifier.weight(1f), onFrame)
+        BarButton(tr(S_TEXT), 22, tr(S_TEXT), Modifier.weight(1f), onText)
     }
 }
