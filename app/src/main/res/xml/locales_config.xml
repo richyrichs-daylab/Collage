@@ -201,4 +201,15 @@
     <locale android:name="wo" />
     <locale android:name="xh" />
     <locale android:name="zu" />
+    <locale android:name="ht" />
+    <locale android:name="ht-HT" />
+    <locale android:name="ig-NG" />
+    <locale android:name="ug" />
+    <locale android:name="ug-CN" />
+    <locale android:name="ny" />
+    <locale android:name="ny-MW" />
+    <locale android:name="tn" />
+    <locale android:name="tn-BW" />
+    <locale android:name="st" />
+    <locale android:name="st-LS" />
 </locale-config>
