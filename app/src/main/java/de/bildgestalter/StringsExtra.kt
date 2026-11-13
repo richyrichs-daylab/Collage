@@ -17,7 +17,7 @@ private fun fix(s: String): String {
 }
 
 /** Alle Zeilen zusammengeführt, spätere Dateien überschreiben frühere. */
-val RAW_DATA: Map<String, String> = BASE_DATA + EXTRA + MORE + MORE2 + MORE3 + FINAL
+val RAW_DATA: Map<String, String> = BASE_DATA + EXTRA + MORE + MORE2 + MORE3 + FINAL + MORE4
 
 /** Alle Sprachen, jede Zeile mit genau 35 Feldern. */
 val DATA: Map<String, String> = RAW_DATA.mapValues { fix(it.value) }
