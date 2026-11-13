@@ -52,7 +52,7 @@ const val S_COUNT = 35
 fun tr(i: Int): String = Lang.get(i)
 
 object Lang {
-    private var code = "en"
+    var code = "en"
     private val cache = HashMap<String, List<String>>()
 
     /** Nimmt die erste Sprache der Liste, die die App kennt. Sonst Englisch. */
