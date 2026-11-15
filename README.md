@@ -29,8 +29,8 @@
 * **pic rows**
 
 ### Features
-* texts
-* pic-rows
+* adding texts and customize color, background, fonts, ...
+* order pics in rows / slideshows (vertical & horizontal)
 * more is coming in frightening version 3.0 ...
 
 ---
@@ -41,6 +41,7 @@
 * French 🇨🇵
 * Hindi 🇮🇳
 * ...
+* (TalkBack is included.)
 ---
 
 ### ❤️ Donations
