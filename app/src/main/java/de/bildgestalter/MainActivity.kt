@@ -1,6 +1,8 @@
 package de.bildgestalter
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -12,7 +14,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -30,16 +34,25 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -226,8 +239,53 @@ fun HomeButton(text: String, tint: Color, onClick: () -> Unit) {
     }
 }
 
+/** Button "Entwickler unterstützen": gestrichelter oranger Rand, magentafarbene Fläche. */
+@Composable
+fun SupportButton(modifier: Modifier, onClick: () -> Unit) {
+    val text = supportText()
+    val label = supportLabel(text)
+    Box(
+        modifier
+            .widthIn(min = 120.dp, max = 210.dp)
+            .drawBehind {
+                val sw = 3.dp.toPx()
+                val inset = sw + 1.dp.toPx()
+                drawRect(
+                    color = Color(0xFFD41B7C),
+                    topLeft = Offset(inset, inset),
+                    size = Size(size.width - 2 * inset, size.height - 2 * inset)
+                )
+                drawRect(
+                    color = Color(0xFFF39C12),
+                    topLeft = Offset(sw / 2f, sw / 2f),
+                    size = Size(size.width - sw, size.height - sw),
+                    style = Stroke(
+                        width = sw,
+                        pathEffect = PathEffect.dashPathEffect(
+                            floatArrayOf(9.dp.toPx(), 6.dp.toPx())
+                        )
+                    )
+                )
+            }
+            .clickable(role = Role.Button) { onClick() }
+            .semantics { contentDescription = text }
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = FontFamily.SansSerif,
+            textAlign = TextAlign.End,
+            modifier = Modifier.clearAndSetSemantics { }
+        )
+    }
+}
+
 @Composable
 fun HomeScreen(onFreistil: () -> Unit, onCollage: () -> Unit, onReihe: () -> Unit) {
+    val context = LocalContext.current
     Box(Modifier.fillMaxSize()) {
         Canvas(Modifier.fillMaxSize()) { drawHomeBackground() }
         Column(
@@ -240,6 +298,18 @@ fun HomeScreen(onFreistil: () -> Unit, onCollage: () -> Unit, onReihe: () -> Uni
             HomeButton(tr(S_FREE), Color(0xFFFF8A65), onFreistil)
             HomeButton(tr(S_COLL), Color(0xFF7C4DFF), onCollage)
             HomeButton(tr(S_ROW), Color(0xFF64B5F6), onReihe)
+        }
+        SupportButton(
+            Modifier
+                .align(Alignment.BottomEnd)
+                .navigationBarsPadding()
+                .padding(end = 10.dp, bottom = 10.dp)
+        ) {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(SUPPORT_URL)))
+            } catch (e: Exception) {
+                // Kein Browser vorhanden: nichts tun
+            }
         }
     }
 }
