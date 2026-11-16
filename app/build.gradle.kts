@@ -16,22 +16,14 @@ android {
     }
 
     val keystoreFile = file("release.jks")
-signingConfigs {
-    create("fest") {
-        storeFile = keystoreFile
-        storeType = "pkcs12"
-        storePassword = System.getenv("KEYSTORE_PASSWORD")
-        keyAlias = "bildgestalter"
-        keyPassword = System.getenv("KEYSTORE_PASSWORD")
-    }
-}
-
-buildTypes {
-    release {
-        signingConfig = signingConfigs.getByName("fest")
-    }
-}
-
+    signingConfigs {
+        create("fest") {
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storeType = "pkcs12"
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "bildgestalter"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
             }
         }
     }
