@@ -2,7 +2,7 @@ package de.bildgestalter
 
 // Ziel des Buttons "Entwickler unterstützen". Hier deinen Link eintragen,
 // z. B. PayPal.me, Ko-fi, Buy Me a Coffee oder GitHub Sponsors.
-const val SUPPORT_URL = "https://github.com/richyrichs-daylab/Collage"
+const val SUPPORT_URL = "https://donate.stripe.com/eVq3cv8XAbah7W3gSm8bS00"
 
 private val SUPPORT_ALIAS = mapOf("iw" to "he", "ji" to "yi", "ary" to "ar", "arz" to "ar")
 
