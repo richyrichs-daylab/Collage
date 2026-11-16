@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+const val SUPPORT_URL = "https://beispiel.com"
 
 val RussoFamily = FontFamily(Font(R.font.russo_one))
 
