@@ -28,12 +28,32 @@ jobs:
       - name: Schlüssel bereitstellen
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: echo "$KEYSTORE_BASE64" | base64 -d > app/release.jks
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > app/release.jks
+            echo "Schlüssel gefunden und bereitgestellt."
+          else
+            echo "::warning::Kein Schlüssel hinterlegt (KEYSTORE_BASE64 fehlt). Die APK wird mit dem Standard-Debug-Schlüssel signiert."
+          fi
 
       - name: APK erstellen
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: gradle assembleDebug
+
+      - name: Signatur prüfen
+        continue-on-error: true
+        run: |
+          APKSIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "::warning::apksigner nicht gefunden, Signatur nicht geprüft."
+            exit 0
+          fi
+          OUT=$("$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk)
+          echo "$OUT" | grep -E "certificate DN|SHA-256"
+          if echo "$OUT" | grep -q "Android Debug"; then
+            echo "::warning::Die APK ist NICHT mit deinem Schlüssel signiert (Standard-Debug-Schlüssel)."
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
