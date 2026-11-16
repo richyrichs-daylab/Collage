@@ -1,0 +1,45 @@
+name: Signierschlüssel erzeugen
+
+on:
+  workflow_dispatch:
+    inputs:
+      bestaetigung:
+        description: "Tippe JA, um einen NEUEN Schlüssel zu erzeugen (ersetzt einen vorhandenen!)"
+        required: true
+        default: "NEIN"
+
+permissions:
+  contents: read
+
+jobs:
+  schluessel:
+    if: ${{ inputs.bestaetigung == 'JA' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Schlüssel erzeugen und als Secrets speichern
+        env:
+          GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+          if [ -z "$GH_TOKEN" ]; then
+            echo "Das Secret ADMIN_TOKEN fehlt. Bitte zuerst den Token anlegen."
+            exit 1
+          fi
+          PW=$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 24)
+          echo "::add-mask::$PW"
+          keytool -genkeypair -keystore release.jks -storetype PKCS12 -alias bildgestalter -keyalg RSA -keysize 2048 -validity 36500 -storepass "$PW" -keypass "$PW" -dname "CN=Bildgestalter, O=Privat, C=DE"
+          B64=$(base64 -w0 release.jks)
+          echo "::add-mask::$B64"
+          gh secret set KEYSTORE_PASSWORD --repo "$REPO" --body "$PW"
+          gh secret set KEYSTORE_BASE64 --repo "$REPO" --body "$B64"
+          echo "Fingerabdruck des neuen Schlüssels (öffentlich, zum Vergleichen):"
+          keytool -list -v -keystore release.jks -storepass "$PW" | grep -E "SHA256|Owner"
+          gh secret delete ADMIN_TOKEN --repo "$REPO" || true
+          rm -f release.jks
+          echo "Fertig: KEYSTORE_PASSWORD und KEYSTORE_BASE64 sind angelegt."
